@@ -38,7 +38,7 @@ import {
   generateChartData,
   getPriceState,
   updateLiveCandle,
-  updatePrices,
+  updatePricesWithScale,
 } from "../utils/priceSimulator";
 
 function getCandleParams(tf: string): { points: number; timeframeMs: number } {
@@ -88,6 +88,9 @@ export function DashboardPage() {
   const [scalpsToday, setScalpsToday] = useState(0);
   const scalpsTodayDateRef = useRef(new Date().toDateString());
   const [candleFlash, setCandleFlash] = useState(false);
+
+  // Track the most recent live price so handleNewCandle can seed the next candle correctly
+  const livePriceRef = useRef<number>(0);
 
   // Watchlist / sidebar state
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
@@ -194,23 +197,51 @@ export function DashboardPage() {
     fetchLiveBinancePrices().then(() => {
       // After fetching, refresh the prices state and regenerate chart data
       // so the initial render uses the real Binance price.
-      setPrices(
-        Object.fromEntries(
-          SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)]),
-        ),
+      const allPrices = Object.fromEntries(
+        SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)]),
       );
+      setPrices(allPrices);
       const p = getCandleParams("1h");
       setChartData(generateChartData("BTC/USD"));
-      setCandleData(generateCandleHistory("BTC/USD", p.points, p.timeframeMs));
+      const history = generateCandleHistory("BTC/USD", p.points, p.timeframeMs);
+      // Anchor the live (last) candle's open to the actual fetched BTC price
+      const livePrice = allPrices["BTC/USD"]?.price ?? 0;
+      if (history.length > 0 && livePrice > 0) {
+        const last = { ...history[history.length - 1] };
+        last.open = livePrice;
+        last.close = livePrice;
+        last.high = livePrice;
+        last.low = livePrice;
+        history[history.length - 1] = last;
+        livePriceRef.current = livePrice;
+      }
+      setCandleData(history);
     });
   }, []);
 
-  // Reload candle data when symbol or timeframe changes
+  // Reload candle data when symbol or timeframe changes.
+  // Anchors the last (live) candle's open to the current real price so the
+  // candle color immediately reflects the actual market direction.
   const handleSymbolOrTimeframeChange = useCallback(
     (sym: string, tf: string) => {
       const p = getCandleParams(tf);
       setChartData(generateChartData(sym));
-      setCandleData(generateCandleHistory(sym, p.points, p.timeframeMs));
+      const history = generateCandleHistory(sym, p.points, p.timeframeMs);
+      // Use the most recent known price (from ref or from priceStates) to
+      // seed the live candle so its open matches reality.
+      const livePrice =
+        livePriceRef.current > 0
+          ? livePriceRef.current
+          : getPriceState(sym).price;
+      if (history.length > 0 && livePrice > 0) {
+        const last = { ...history[history.length - 1] };
+        last.open = livePrice;
+        last.close = livePrice;
+        last.high = livePrice;
+        last.low = livePrice;
+        history[history.length - 1] = last;
+      }
+      setCandleData(history);
     },
     [],
   );
@@ -219,26 +250,35 @@ export function DashboardPage() {
     handleSymbolOrTimeframeChange(selectedSymbol, timeframe);
   }, [selectedSymbol, timeframe, handleSymbolOrTimeframeChange]);
 
-  // Price update loop
+  // Price update loop — runs at 100ms for smooth chart updates.
+  // Uses timeframe-aware delta scaling so that 1H candles move at 1H speed
+  // rather than 1m speed. The scale factor is sqrt(60_000 / timeframeMs):
+  //   1m → 1.0, 5m → 0.447, 15m → 0.258, 1H → 0.129, 4H → 0.065, 1D → 0.026
   useEffect(() => {
+    const p = getCandleParams(timeframe);
+    // sqrt gives us a Brownian-motion-appropriate scaling between timeframes
+    const tickScaleFactor = Math.sqrt(60_000 / p.timeframeMs);
+
     const interval = setInterval(() => {
-      updatePrices();
+      updatePricesWithScale(tickScaleFactor);
       const newPrices = Object.fromEntries(
         SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)]),
       );
       setPrices(newPrices);
       setPositions((prev) =>
-        prev.map((p) => {
-          const current = newPrices[p.symbol]?.price ?? p.currentPrice;
+        prev.map((pos) => {
+          const current = newPrices[pos.symbol]?.price ?? pos.currentPrice;
           const pnl =
-            p.side === "buy"
-              ? (current - p.entryPrice) * p.quantity
-              : (p.entryPrice - current) * p.quantity;
-          return { ...p, currentPrice: current, pnl };
+            pos.side === "buy"
+              ? (current - pos.entryPrice) * pos.quantity
+              : (pos.entryPrice - current) * pos.quantity;
+          return { ...pos, currentPrice: current, pnl };
         }),
       );
       const livePrice = newPrices[selectedSymbol]?.price;
       if (livePrice) {
+        // Keep ref in sync so handleNewCandle can seed the opening price correctly
+        livePriceRef.current = livePrice;
         const config = SYMBOLS.find((s) => s.symbol === selectedSymbol);
         if (config) {
           setCandleData((prev) => updateLiveCandle(prev, livePrice, config));
@@ -246,7 +286,7 @@ export function DashboardPage() {
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [selectedSymbol]);
+  }, [selectedSymbol, timeframe]);
 
   // Midnight reset
   useEffect(() => {
@@ -260,12 +300,38 @@ export function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
+  // Called by useCandleTimer when a new candle period starts.
+  // Instead of regenerating all history (which causes a visible jump),
+  // we append a single new candle seeded from the last close price.
   const handleNewCandle = useCallback(() => {
     const p = getCandleParams(timeframe);
     setChartData(generateChartData(selectedSymbol));
-    setCandleData(
-      generateCandleHistory(selectedSymbol, p.points, p.timeframeMs),
-    );
+    setCandleData((prev) => {
+      if (prev.length === 0) return prev;
+      const lastClose = prev[prev.length - 1].close;
+      // Prefer the live price ref if populated; fall back to last close
+      const seedPrice =
+        livePriceRef.current > 0 ? livePriceRef.current : lastClose;
+      const now = Date.now();
+      const d = new Date(now);
+      const timeStr =
+        p.timeframeMs < 86_400_000
+          ? `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`
+          : `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+      const newCandle: CandleData = {
+        time: timeStr,
+        open: seedPrice,
+        high: seedPrice,
+        low: seedPrice,
+        close: seedPrice,
+        index: prev.length,
+      };
+      // Keep at most 200 candles to avoid unbounded growth
+      const updated = [...prev, newCandle];
+      return updated.length > 200
+        ? updated.slice(updated.length - 200)
+        : updated;
+    });
     setCandleFlash(true);
     setTimeout(() => setCandleFlash(false), 600);
   }, [selectedSymbol, timeframe]);
