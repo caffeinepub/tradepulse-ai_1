@@ -291,7 +291,11 @@ export function DashboardPage() {
     import("../types/smc").FactorWeights | undefined
   >(undefined);
 
-  const { currentSignal, history: signalHistory } = useAISignals(
+  const {
+    currentSignal,
+    history: signalHistory,
+    signalExpiresAt,
+  } = useAISignals(
     selectedSymbol,
     selectedPrice?.price ?? 0,
     chartData,
@@ -647,6 +651,8 @@ export function DashboardPage() {
               currentSignal={currentSignal}
               history={signalHistory}
               symbol={selectedSymbol}
+              signalExpiresAt={signalExpiresAt}
+              smcContext={smcContext}
             />
 
             {/* Open trades */}

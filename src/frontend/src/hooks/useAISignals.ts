@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { FactorWeights, SMCSignalContext } from "../types/smc";
-import { type AISignal, generateSignal } from "../utils/aiSignalEngine";
+import {
+  type AISignal,
+  generateSignal,
+  getSignalTimeout,
+} from "../utils/aiSignalEngine";
 import type { MarketAnalysis } from "../utils/marketAnalysisEngine";
 import type { MultiTimeframeAnalysis } from "../utils/multiTimeframeEngine";
 import type { SentimentLabel } from "../utils/newsService";
@@ -22,9 +26,20 @@ export function useAISignals(
   selectedTimeframe?: string,
   scalpsToday?: number,
   positionSize?: number,
-): { currentSignal: AISignal | null; history: AISignal[] } {
-  const [currentSignal, setCurrentSignal] = useState<AISignal | null>(null);
+): {
+  currentSignal: AISignal | null;
+  history: AISignal[];
+  signalExpiresAt: number | null;
+} {
+  const [liveSignal, setLiveSignal] = useState<AISignal | null>(null);
   const [history, setHistory] = useState<AISignal[]>([]);
+  const [signalExpiresAt, setSignalExpiresAt] = useState<number | null>(null);
+
+  const liveSignalRef = useRef<AISignal | null>(null);
+  const expiryRef = useRef<number | null>(null);
+  const lastDirectionRef = useRef<string | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
+
   const prevSymbolRef = useRef(symbol);
   const analysisRef = useRef(analysis);
   const mtfRef = useRef(mtf);
@@ -48,13 +63,19 @@ export function useAISignals(
     if (prevSymbolRef.current !== symbol) {
       prevSymbolRef.current = symbol;
       setHistory([]);
-      setCurrentSignal(null);
+      setLiveSignal(null);
+      liveSignalRef.current = null;
+      expiryRef.current = null;
+      lastDirectionRef.current = null;
+      lastUpdateTimeRef.current = 0;
+      setSignalExpiresAt(null);
     }
   }, [symbol]);
 
   useEffect(() => {
     const tick = () => {
       if (price <= 0 || chartData.length < 5) return;
+
       let signal = generateSignal(
         symbol,
         price,
@@ -68,7 +89,7 @@ export function useAISignals(
         positionSizeRef.current,
       );
 
-      // ── Apply SMC context adjustments ────────────────────────────────
+      // Apply SMC context adjustments
       const smc = smcContextRef.current;
       if (smc) {
         let conf = signal.confidence;
@@ -85,7 +106,7 @@ export function useAISignals(
         signal = { ...signal, signal: sig, confidence: Math.round(conf) };
       }
 
-      // ── Apply optimizer weight scaling ────────────────────────────────
+      // Apply optimizer weight scaling
       const w = optimizerWeightsRef.current;
       if (w) {
         const bd = signal.confidenceBreakdown;
@@ -106,8 +127,55 @@ export function useAISignals(
         }
       }
 
-      setCurrentSignal(signal);
-      setHistory((prev) => [signal, ...prev].slice(0, 100));
+      const now = Date.now();
+      const currentDir = liveSignalRef.current?.signal ?? null;
+      const isExpired = expiryRef.current !== null && now > expiryRef.current;
+      const directionChanged = signal.signal !== currentDir;
+      const cooldownPassed = now - lastUpdateTimeRef.current >= 60_000;
+      const candidateIsActionable =
+        signal.signal === "BUY" || signal.signal === "SELL";
+
+      // Decide whether to emit this signal
+      const shouldEmit =
+        isExpired ||
+        directionChanged ||
+        (cooldownPassed && candidateIsActionable && currentDir === null);
+
+      if (shouldEmit) {
+        if (candidateIsActionable) {
+          // Emit BUY/SELL
+          const expiresAt = now + getSignalTimeout(signal.tradeType);
+          liveSignalRef.current = signal;
+          expiryRef.current = expiresAt;
+          lastDirectionRef.current = signal.signal;
+          lastUpdateTimeRef.current = now;
+          setLiveSignal(signal);
+          setSignalExpiresAt(expiresAt);
+          setHistory((prev) => [signal, ...prev].slice(0, 100));
+        } else {
+          // HOLD: only update if current is also HOLD or expired
+          if (currentDir === "HOLD" || currentDir === null || isExpired) {
+            liveSignalRef.current = signal;
+            expiryRef.current = null;
+            lastDirectionRef.current = "HOLD";
+            setLiveSignal(signal);
+            setSignalExpiresAt(null);
+            // Do NOT add HOLD to history
+          }
+        }
+      } else if (
+        !candidateIsActionable &&
+        currentDir !== "HOLD" &&
+        currentDir !== null &&
+        isExpired
+      ) {
+        // Current expired and candidate is HOLD - transition to HOLD
+        liveSignalRef.current = signal;
+        expiryRef.current = null;
+        lastDirectionRef.current = "HOLD";
+        setLiveSignal(signal);
+        setSignalExpiresAt(null);
+      }
     };
 
     tick();
@@ -115,5 +183,5 @@ export function useAISignals(
     return () => clearInterval(id);
   }, [symbol, price, chartData]);
 
-  return { currentSignal, history };
+  return { currentSignal: liveSignal, history, signalExpiresAt };
 }
