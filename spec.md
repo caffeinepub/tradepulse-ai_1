@@ -1,43 +1,29 @@
 # TradePulse AI
 
 ## Current State
-The dashboard (`DashboardPage.tsx`) has:
-- A static `AI_SIGNALS` map with fixed signal/confidence/reason per symbol
-- A thin "AI SIGNAL" bar at the bottom of the chart showing signal badge + confidence bar + reason text
-- Right panel with order entry and open positions (visible only on large screens)
-- Prices update on a 3-second interval via `priceSimulator`
+The dashboard has a trading chart with a symbol header area that includes a timeframe selector (1m, 5m, 15m, 1H, 4H, 1D tabs) displayed at the top right of the symbol header. The chart uses Recharts AreaChart. Candle data is generated via `generateChartData` and regenerated when the symbol changes, but NOT when the timeframe changes. There is no candle countdown timer, no candle progress bar, and no visual flash on new candle open.
 
 ## Requested Changes (Diff)
 
 ### Add
-- `AISignalEngine` utility/hook (`useAISignals`) that:
-  - Runs automatically every 1 second (no manual trigger)
-  - Reads current price + price history for the selected asset
-  - Computes a full signal object including: signal type (BUY/SELL/HOLD), entry price, stop loss, take profit, risk/reward ratio, probability score (0-100), trend direction (Bullish/Bearish/Neutral), trade type (Scalp/Intraday/Swing), and timestamp
-  - Uses simulated technical analysis logic (momentum, volatility, moving average crossover proxies based on recent chart data)
-  - Appends each new signal to a signal history array (capped at 100 entries)
-- `SignalsPanel` component:
-  - Dedicated right-side panel replacing the current right `<aside>` on the dashboard (or placed next to chart)
-  - **Live Signal Card** at top: shows latest signal with all fields highlighted (large signal badge, entry/SL/TP/RR/probability/trend/trade type)
-  - **Signal History Table** below the live card: scrollable list with all history fields (asset, signal, entry, SL, TP, RR, probability, trend, trade type, timestamp)
-  - Latest signal always at top of history
-  - Auto-updates every second as new signal arrives
-- Order entry and open positions section preserved (can be a collapsible section or tab within the right panel)
+- `useCandleTimer` hook: tracks seconds elapsed/remaining in the current candle based on the selected timeframe. Exposes `secondsRemaining`, `progress` (0–100), and `isNewCandle` (brief boolean true at candle close).
+- Candle countdown timer display: shows `MM:SS` format remaining time in the price status bar area (the symbol header row).
+- Candle progress bar: shows percentage complete (0–100%) with a filled bar in the same area.
+- Visual flash: when a new candle starts, the newest chart candle briefly highlights (CSS keyframe flash animation on a wrapper element or via state-driven class).
+- Timeframe change triggers chart data regeneration (`generateChartData`) so chart reflects the new period intervals.
+- `isNewCandle` event also triggers signal refresh (re-runs AI signal engine).
 
 ### Modify
-- `DashboardPage.tsx`:
-  - Remove the static `AI_SIGNALS` map
-  - Remove the bottom AI signal bar
-  - Integrate `useAISignals` hook, pass selected symbol and current price/chart data
-  - Replace or reorganize the right `<aside>` to include the `SignalsPanel` + order/positions below it
-  - Layout: left sidebar (symbols) | chart (main, flex-1) | right panel (signals panel + order/positions)
+- `DashboardPage`: wire `useCandleTimer` with selected timeframe; display timer + progress bar in the symbol header; regenerate `chartData` on timeframe change; trigger new candle flash.
+- Symbol header layout: add timer and progress bar elements between the price display and the timeframe tabs.
 
 ### Remove
-- Static `AI_SIGNALS` constant
-- Bottom AI signal strip below the chart
+- Nothing removed.
 
 ## Implementation Plan
-1. Create `src/frontend/src/utils/aiSignalEngine.ts` — pure signal generation logic
-2. Create `src/frontend/src/hooks/useAISignals.ts` — React hook wrapping the engine, 1-second interval, history state
-3. Create `src/frontend/src/components/SignalsPanel.tsx` — live signal card + history table UI
-4. Update `DashboardPage.tsx` — wire hook, integrate SignalsPanel, remove old static signals
+1. Create `src/frontend/src/hooks/useCandleTimer.ts` -- calculates candle duration from timeframe string, computes `secondsRemaining` and `progress` on a 1-second interval, fires `onNewCandle` callback at zero.
+2. Update `DashboardPage.tsx`:
+   - Call `useCandleTimer(timeframe)` with a callback that regenerates chart data and triggers signal refresh.
+   - Add timer (`MM:SS`) and progress bar to the symbol header row.
+   - Add `newCandleFlash` state boolean; apply a flash CSS class to the chart container for ~600ms on new candle.
+3. Add flash keyframe animation to `index.css` or inline style.

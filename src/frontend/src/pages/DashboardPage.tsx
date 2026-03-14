@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { SignalsPanel } from "../components/SignalsPanel";
 import { useAISignals } from "../hooks/useAISignals";
+import { useCandleTimer } from "../hooks/useCandleTimer";
 import { useUserProfile } from "../hooks/useQueries";
 import {
   SYMBOLS,
@@ -35,6 +36,14 @@ const CATEGORIES = [
 ];
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
+
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = (seconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
 
 interface OrderEntry {
   side: "buy" | "sell";
@@ -89,10 +98,21 @@ export function DashboardPage() {
   ]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clock, setClock] = useState(new Date());
+  const [candleFlash, setCandleFlash] = useState(false);
+
+  // Regenerate chart when symbol or timeframe changes
+  const handleSymbolOrTimeframeChange = useCallback(
+    (sym: string, tf: string) => {
+      setChartData(generateChartData(sym));
+      // tf is used to trigger re-run when timeframe changes
+      void tf;
+    },
+    [],
+  );
 
   useEffect(() => {
-    setChartData(generateChartData(selectedSymbol));
-  }, [selectedSymbol]);
+    handleSymbolOrTimeframeChange(selectedSymbol, timeframe);
+  }, [selectedSymbol, timeframe, handleSymbolOrTimeframeChange]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -119,6 +139,17 @@ export function DashboardPage() {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const handleNewCandle = useCallback(() => {
+    setChartData(generateChartData(selectedSymbol));
+    setCandleFlash(true);
+    setTimeout(() => setCandleFlash(false), 600);
+  }, [selectedSymbol]);
+
+  const { secondsRemaining, progress } = useCandleTimer(
+    timeframe,
+    handleNewCandle,
+  );
 
   const handlePlaceOrder = useCallback(() => {
     const qty = Number.parseFloat(order.quantity);
@@ -154,6 +185,9 @@ export function DashboardPage() {
     selectedPrice?.price ?? 0,
     chartData,
   );
+
+  const progressFillColor =
+    progress >= 80 ? "oklch(0.72 0.18 60)" : "oklch(0.72 0.18 145)";
 
   return (
     <div className="flex flex-col h-screen" style={{ paddingTop: "6rem" }}>
@@ -265,6 +299,7 @@ export function DashboardPage() {
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {/* Symbol header */}
           <div className="border-b border-border px-4 py-3 flex items-center gap-4 flex-wrap shrink-0">
+            {/* Symbol + Price */}
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-display font-bold text-base">
@@ -290,6 +325,47 @@ export function DashboardPage() {
                 </span>
               </div>
             </div>
+
+            {/* Candle timer */}
+            <div
+              data-ocid="dashboard.candle_timer"
+              className="hidden sm:flex flex-col gap-1 px-3 py-1.5 rounded terminal-border bg-secondary/30 min-w-[120px]"
+            >
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                CANDLE CLOSE
+              </span>
+              <span
+                className="font-mono-num text-sm font-bold"
+                style={{ color: progressFillColor }}
+              >
+                {formatCountdown(secondsRemaining)}
+              </span>
+              <div
+                data-ocid="dashboard.candle_progress"
+                className="flex items-center gap-1.5"
+              >
+                <div
+                  className="flex-1 rounded-full overflow-hidden"
+                  style={{ height: "4px", background: "oklch(0.22 0.012 240)" }}
+                >
+                  <div
+                    className="h-full rounded-full transition-all duration-1000"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, progress))}%`,
+                      background: progressFillColor,
+                    }}
+                  />
+                </div>
+                <span
+                  className="font-mono-num shrink-0"
+                  style={{ fontSize: "9px", color: "oklch(0.52 0.01 220)" }}
+                >
+                  {Math.round(progress)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Timeframe tabs */}
             <div className="ml-auto">
               <Tabs value={timeframe} onValueChange={setTimeframe}>
                 <TabsList className="bg-secondary h-7 p-0.5">
@@ -309,7 +385,9 @@ export function DashboardPage() {
           </div>
 
           {/* Chart */}
-          <div className="flex-1 min-h-0 p-2">
+          <div
+            className={`flex-1 min-h-0 p-2 transition-all ${candleFlash ? "candle-flash" : ""}`}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={chartData}

@@ -148,4 +148,11 @@
   .animate-pulse-green {
     animation: pulse-green 2s ease-in-out infinite;
   }
+  @keyframes candleFlash {
+    0% { background-color: oklch(0.72 0.18 145 / 0.12); }
+    100% { background-color: transparent; }
+  }
+  .candle-flash {
+    animation: candleFlash 0.6s ease-out forwards;
+  }
 }
