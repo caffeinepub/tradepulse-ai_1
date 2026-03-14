@@ -112,32 +112,82 @@ export function SignalsPanel({
               </Badge>
             </div>
 
-            {/* Probability bar */}
+            {/* Confidence bar */}
             <div className="mb-2">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[9px] text-muted-foreground">
-                  Probability
+                  Confidence
                 </span>
                 <span
                   className={`font-mono-num text-[10px] font-semibold ${
-                    currentSignal.probability >= 70
+                    currentSignal.confidence >= 70
                       ? "text-buy"
-                      : currentSignal.probability >= 55
+                      : currentSignal.confidence >= 55
                         ? "text-foreground"
                         : "text-sell"
                   }`}
                 >
-                  {currentSignal.probability}%
+                  {currentSignal.confidence}%
                 </span>
               </div>
               <Progress
-                value={currentSignal.probability}
+                value={currentSignal.confidence}
                 className="h-1.5"
-                style={{
-                  background: "oklch(0.16 0.012 240)",
-                }}
+                style={{ background: "oklch(0.16 0.012 240)" }}
               />
             </div>
+
+            {/* Confidence Breakdown */}
+            {currentSignal.confidenceBreakdown && (
+              <div className="mb-2 space-y-0.5">
+                {(
+                  [
+                    ["Trend", currentSignal.confidenceBreakdown.trendAlignment],
+                    [
+                      "Indicators",
+                      currentSignal.confidenceBreakdown.indicatorConfluence,
+                    ],
+                    [
+                      "Volume",
+                      currentSignal.confidenceBreakdown.volumeConfirmation,
+                    ],
+                    [
+                      "Structure",
+                      currentSignal.confidenceBreakdown.structureSignals,
+                    ],
+                  ] as [string, number][]
+                ).map(([label, val]) => (
+                  <div key={label} className="flex items-center gap-1.5">
+                    <span className="text-[8px] text-muted-foreground w-14 shrink-0">
+                      {label}
+                    </span>
+                    <div
+                      className="flex-1 rounded-full overflow-hidden"
+                      style={{
+                        height: "3px",
+                        background: "oklch(0.16 0.012 240)",
+                      }}
+                    >
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${(val / 25) * 100}%`,
+                          background:
+                            val >= 18
+                              ? "oklch(0.72 0.18 145)"
+                              : val >= 10
+                                ? "oklch(0.72 0.18 60)"
+                                : "oklch(0.52 0.01 220)",
+                        }}
+                      />
+                    </div>
+                    <span className="text-[8px] font-mono-num text-muted-foreground w-4 text-right">
+                      {val}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Trend */}
             <div className="flex items-center gap-1 mb-2">
@@ -174,17 +224,27 @@ export function SignalsPanel({
                 </div>
               </div>
               <div>
-                <div className="text-muted-foreground">Take Profit</div>
+                <div className="text-muted-foreground">TP1</div>
                 <div className="font-mono-num text-buy font-medium">
-                  {currentSignal.takeProfit.toFixed(
-                    currentSignal.takeProfit > 100 ? 2 : 5,
-                  )}
+                  {currentSignal.tp1.toFixed(currentSignal.tp1 > 100 ? 2 : 5)}
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">R:R</div>
                 <div className="font-mono-num text-foreground font-medium">
                   1:{currentSignal.riskReward.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">TP2</div>
+                <div className="font-mono-num text-buy font-medium">
+                  {currentSignal.tp2.toFixed(currentSignal.tp2 > 100 ? 2 : 5)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">TP3</div>
+                <div className="font-mono-num text-buy font-medium">
+                  {currentSignal.tp3.toFixed(currentSignal.tp3 > 100 ? 2 : 5)}
                 </div>
               </div>
             </div>
@@ -268,9 +328,9 @@ export function SignalsPanel({
                       </span>
                     </span>
                     <span className="text-muted-foreground">
-                      TP:{" "}
+                      TP1:{" "}
                       <span className="text-buy">
-                        {sig.takeProfit.toFixed(sig.takeProfit > 100 ? 2 : 5)}
+                        {sig.tp1.toFixed(sig.tp1 > 100 ? 2 : 5)}
                       </span>
                     </span>
                   </div>
@@ -283,14 +343,14 @@ export function SignalsPanel({
                     </span>
                     <span
                       className={`${
-                        sig.probability >= 70
+                        sig.confidence >= 70
                           ? "text-buy"
-                          : sig.probability >= 55
+                          : sig.confidence >= 55
                             ? "text-foreground"
                             : "text-sell"
                       }`}
                     >
-                      {sig.probability}%
+                      {sig.confidence}%
                     </span>
                   </div>
                 </div>

@@ -82,6 +82,15 @@ export interface PriceState {
   low24h: number;
 }
 
+export interface CandleData {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  index: number;
+}
+
 const priceStates = new Map<string, PriceState>();
 
 function initPriceState(config: SymbolConfig): PriceState {
@@ -151,6 +160,68 @@ export function generateChartData(
   }
 
   return data;
+}
+
+export function generateCandleHistory(
+  symbol: string,
+  points = 80,
+  _timeframeMs = 60000,
+): CandleData[] {
+  const config = SYMBOLS.find((s) => s.symbol === symbol);
+  if (!config) return [];
+
+  const candles: CandleData[] = [];
+  let price = config.basePrice * (0.97 + Math.random() * 0.06);
+  const now = Date.now();
+
+  for (let i = points - 1; i >= 0; i--) {
+    const open = price;
+    // Generate realistic intra-candle movement
+    const numTicks = 10;
+    let high = open;
+    let low = open;
+    let close = open;
+    for (let t = 0; t < numTicks; t++) {
+      const tick = close * config.volatility * (Math.random() - 0.48) * 3;
+      close = Math.max(close + tick, config.basePrice * 0.3);
+      high = Math.max(high, close);
+      low = Math.min(low, close);
+    }
+    // Extend wicks slightly
+    const wickMult = config.volatility * open * 0.4;
+    high += Math.random() * wickMult;
+    low -= Math.random() * wickMult;
+
+    const ts = now - i * _timeframeMs;
+    const d = new Date(ts);
+    const timeStr = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    candles.push({
+      time: timeStr,
+      open,
+      high,
+      low,
+      close,
+      index: candles.length,
+    });
+    price = close;
+  }
+
+  return candles;
+}
+
+export function updateLiveCandle(
+  candles: CandleData[],
+  newPrice: number,
+  _symbolConfig: SymbolConfig,
+): CandleData[] {
+  if (candles.length === 0) return candles;
+  const updated = [...candles];
+  const last = { ...updated[updated.length - 1] };
+  last.close = newPrice;
+  last.high = Math.max(last.high, newPrice);
+  last.low = Math.min(last.low, newPrice);
+  updated[updated.length - 1] = last;
+  return updated;
 }
 
 export function formatPrice(price: number, precision: number): string {

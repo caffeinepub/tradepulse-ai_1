@@ -5,26 +5,36 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, Menu, TrendingDown, TrendingUp, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
 import {
-  Area,
-  AreaChart,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-} from "recharts";
+  AlertTriangle,
+  Clock,
+  Menu,
+  TrendingDown,
+  TrendingUp,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChartCanvas, type ChartType } from "../components/ChartCanvas";
+import { MarketAnalysisPanel } from "../components/MarketAnalysisPanel";
 import { SignalsPanel } from "../components/SignalsPanel";
+import { TradeChartOverlay } from "../components/TradeChartOverlay";
+import { TradePopup } from "../components/TradePopup";
 import { useAISignals } from "../hooks/useAISignals";
 import { useCandleTimer } from "../hooks/useCandleTimer";
+import { useMarketAnalysis } from "../hooks/useMarketAnalysis";
+import { useMultiTimeframe } from "../hooks/useMultiTimeframe";
 import { useUserProfile } from "../hooks/useQueries";
+import { useTradeHistory } from "../hooks/useTradeHistory";
+import type { TradeRecord } from "../types/trade";
 import {
+  type CandleData,
   SYMBOLS,
   type SymbolConfig,
   formatCurrency,
+  generateCandleHistory,
   generateChartData,
   getPriceState,
+  updateLiveCandle,
   updatePrices,
 } from "../utils/priceSimulator";
 
@@ -36,6 +46,13 @@ const CATEGORIES = [
 ];
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
+
+const CHART_TYPES: { key: ChartType; label: string }[] = [
+  { key: "candlestick", label: "Candle" },
+  { key: "line", label: "Line" },
+  { key: "area", label: "Area" },
+  { key: "bar", label: "Bar" },
+];
 
 function formatCountdown(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -66,8 +83,12 @@ export function DashboardPage() {
   const { data: profile } = useUserProfile();
   const [selectedSymbol, setSelectedSymbol] = useState("BTC/USD");
   const [timeframe, setTimeframe] = useState("1H");
+  const [chartType, setChartType] = useState<ChartType>("candlestick");
   const [chartData, setChartData] = useState(() =>
     generateChartData("BTC/USD"),
+  );
+  const [candleData, setCandleData] = useState<CandleData[]>(() =>
+    generateCandleHistory("BTC/USD"),
   );
   const [prices, setPrices] = useState(() =>
     Object.fromEntries(SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)])),
@@ -99,13 +120,18 @@ export function DashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clock, setClock] = useState(new Date());
   const [candleFlash, setCandleFlash] = useState(false);
+  const [activePopup, setActivePopup] = useState<{
+    trade: TradeRecord;
+    x: number;
+    y: number;
+  } | null>(null);
 
-  // Regenerate chart when symbol or timeframe changes
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+
   const handleSymbolOrTimeframeChange = useCallback(
-    (sym: string, tf: string) => {
+    (sym: string, _tf: string) => {
       setChartData(generateChartData(sym));
-      // tf is used to trigger re-run when timeframe changes
-      void tf;
+      setCandleData(generateCandleHistory(sym));
     },
     [],
   );
@@ -131,9 +157,17 @@ export function DashboardPage() {
           return { ...p, currentPrice: current, pnl };
         }),
       );
+      // Update live candle for selected symbol
+      const livePrice = newPrices[selectedSymbol]?.price;
+      if (livePrice) {
+        const config = SYMBOLS.find((s) => s.symbol === selectedSymbol);
+        if (config) {
+          setCandleData((prev) => updateLiveCandle(prev, livePrice, config));
+        }
+      }
     }, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedSymbol]);
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
@@ -142,6 +176,7 @@ export function DashboardPage() {
 
   const handleNewCandle = useCallback(() => {
     setChartData(generateChartData(selectedSymbol));
+    setCandleData(generateCandleHistory(selectedSymbol));
     setCandleFlash(true);
     setTimeout(() => setCandleFlash(false), 600);
   }, [selectedSymbol]);
@@ -151,7 +186,50 @@ export function DashboardPage() {
     handleNewCandle,
   );
 
+  const selectedConfig: SymbolConfig =
+    SYMBOLS.find((s) => s.symbol === selectedSymbol) ?? SYMBOLS[0];
+  const selectedPrice = prices[selectedSymbol];
+
+  const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
+  const balance = profile?.balance ?? 10000;
+  const equity = balance + totalPnL;
+
+  const isChartUp =
+    chartData.length > 1 &&
+    chartData[chartData.length - 1].price >= chartData[0].price;
+
+  // Market analysis engine
+  const analysis = useMarketAnalysis(
+    selectedSymbol,
+    selectedPrice?.price ?? 0,
+    chartData,
+  );
+
+  // Multi-timeframe analysis engine
+  const mtf = useMultiTimeframe(
+    selectedSymbol,
+    selectedPrice?.price ?? 0,
+    chartData,
+  );
+  const { currentSignal, history: signalHistory } = useAISignals(
+    selectedSymbol,
+    selectedPrice?.price ?? 0,
+    chartData,
+    analysis,
+    mtf,
+  );
+
+  // Trade history
+  const {
+    chartRenderTrades,
+    openTrade,
+    closeTrade,
+    dailyPnl,
+    dailyLossLimitHit,
+  } = useTradeHistory(signalHistory, selectedSymbol, chartData);
+
   const handlePlaceOrder = useCallback(() => {
+    if (dailyLossLimitHit) return;
     const qty = Number.parseFloat(order.quantity);
     if (!qty || qty <= 0) return;
     const price = prices[selectedSymbol]?.price ?? 0;
@@ -166,28 +244,41 @@ export function DashboardPage() {
       pnl: 0,
     };
     setPositions((prev) => [newPos, ...prev]);
-  }, [order, selectedSymbol, prices]);
-
-  const selectedConfig: SymbolConfig =
-    SYMBOLS.find((s) => s.symbol === selectedSymbol) ?? SYMBOLS[0];
-  const selectedPrice = prices[selectedSymbol];
-
-  const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
-  const balance = profile?.balance ?? 10000;
-  const equity = balance + totalPnL;
-
-  const isChartUp =
-    chartData.length > 1 &&
-    chartData[chartData.length - 1].price >= chartData[0].price;
-
-  const { currentSignal, history: signalHistory } = useAISignals(
-    selectedSymbol,
-    selectedPrice?.price ?? 0,
-    chartData,
-  );
+    openTrade({
+      symbol: selectedSymbol,
+      side: order.side,
+      source: "demo",
+      entryPrice: price,
+      entryIndex: chartData.length - 1,
+    });
+  }, [order, selectedSymbol, prices, openTrade, chartData, dailyLossLimitHit]);
 
   const progressFillColor =
     progress >= 80 ? "oklch(0.72 0.18 60)" : "oklch(0.72 0.18 145)";
+
+  function formatSignalTime(date: Date): string {
+    return date.toTimeString().slice(0, 8);
+  }
+
+  // Price range for chart overlay (must match what ChartCanvas displays)
+  const { priceMin, priceMax } = useMemo(() => {
+    if (chartType === "candlestick" || chartType === "bar") {
+      if (candleData.length === 0) return { priceMin: 0, priceMax: 1 };
+      const low = Math.min(...candleData.map((c) => c.low));
+      const high = Math.max(...candleData.map((c) => c.high));
+      const pad = (high - low) * 0.08;
+      return { priceMin: low - pad, priceMax: high + pad };
+    }
+    if (chartData.length === 0) return { priceMin: 0, priceMax: 1 };
+    const ps = chartData.map((d) => d.price);
+    const lo = Math.min(...ps);
+    const hi = Math.max(...ps);
+    const pad = (hi - lo) * 0.08;
+    return { priceMin: lo - pad, priceMax: hi + pad };
+  }, [chartType, candleData, chartData]);
+
+  // Open trades for reference lines
+  const openTrades = chartRenderTrades.filter((t) => t.status === "open");
 
   return (
     <div className="flex flex-col h-screen" style={{ paddingTop: "6rem" }}>
@@ -219,6 +310,29 @@ export function DashboardPage() {
             {formatCurrency(totalPnL)}
           </span>
         </div>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-muted-foreground">Daily P&amp;L</span>
+          <span
+            className={`font-mono-num font-semibold ${dailyPnl >= 0 ? "text-buy" : "text-sell"}`}
+          >
+            {dailyPnl >= 0 ? "+" : ""}
+            {formatCurrency(dailyPnl)}
+          </span>
+        </div>
+        {dailyLossLimitHit && (
+          <div
+            data-ocid="risk.daily_loss_limit_badge"
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-semibold"
+            style={{
+              background: "oklch(0.25 0.08 27 / 0.6)",
+              border: "1px solid oklch(0.62 0.22 27 / 0.5)",
+              color: "oklch(0.82 0.12 27)",
+            }}
+          >
+            <AlertTriangle className="w-3 h-3 shrink-0" />
+            Daily Loss Limit Reached — Trading Paused
+          </div>
+        )}
         <div className="ml-auto md:hidden">
           <button
             type="button"
@@ -299,7 +413,6 @@ export function DashboardPage() {
         <main className="flex-1 flex flex-col overflow-hidden min-w-0">
           {/* Symbol header */}
           <div className="border-b border-border px-4 py-3 flex items-center gap-4 flex-wrap shrink-0">
-            {/* Symbol + Price */}
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-display font-bold text-base">
@@ -315,7 +428,7 @@ export function DashboardPage() {
               <div className="flex items-center gap-3 mt-0.5">
                 <span className="font-mono-num text-2xl font-bold">
                   {selectedPrice?.price.toFixed(selectedConfig.precision) ??
-                    "—"}
+                    "\u2014"}
                 </span>
                 <span
                   className={`font-mono-num text-sm ${(selectedPrice?.changePercent ?? 0) >= 0 ? "text-buy" : "text-sell"}`}
@@ -365,8 +478,30 @@ export function DashboardPage() {
               </div>
             </div>
 
-            {/* Timeframe tabs */}
-            <div className="ml-auto">
+            {/* Timeframe tabs + Chart type switcher */}
+            <div className="ml-auto flex items-center gap-2">
+              {/* Chart type switcher */}
+              <div
+                className="flex items-center gap-px p-0.5 rounded"
+                style={{ background: "oklch(0.16 0.012 240)" }}
+              >
+                {CHART_TYPES.map((ct) => (
+                  <button
+                    key={ct.key}
+                    type="button"
+                    data-ocid={`chart.${ct.key}_button`}
+                    onClick={() => setChartType(ct.key)}
+                    className={`px-2 h-6 text-[10px] font-mono rounded transition-colors ${
+                      chartType === ct.key
+                        ? "bg-card text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {ct.label}
+                  </button>
+                ))}
+              </div>
+
               <Tabs value={timeframe} onValueChange={setTimeframe}>
                 <TabsList className="bg-secondary h-7 p-0.5">
                   {TIMEFRAMES.map((tf, i) => (
@@ -386,112 +521,33 @@ export function DashboardPage() {
 
           {/* Chart */}
           <div
-            className={`flex-1 min-h-0 p-2 transition-all ${candleFlash ? "candle-flash" : ""}`}
+            ref={chartContainerRef}
+            className={`flex-1 min-h-0 p-2 transition-all relative ${candleFlash ? "candle-flash" : ""}`}
           >
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={chartData}
-                margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-              >
-                <defs>
-                  <linearGradient
-                    id="chartGradientUp"
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="1"
-                  >
-                    <stop
-                      offset="5%"
-                      stopColor="oklch(0.72 0.18 145)"
-                      stopOpacity={0.3}
-                    />
-                    <stop
-                      offset="95%"
-                      stopColor="oklch(0.72 0.18 145)"
-                      stopOpacity={0}
-                    />
-                  </linearGradient>
-                  <linearGradient
-                    id="chartGradientDown"
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="1"
-                  >
-                    <stop
-                      offset="5%"
-                      stopColor="oklch(0.62 0.22 27)"
-                      stopOpacity={0.3}
-                    />
-                    <stop
-                      offset="95%"
-                      stopColor="oklch(0.62 0.22 27)"
-                      stopOpacity={0}
-                    />
-                  </linearGradient>
-                </defs>
-                <XAxis
-                  dataKey="time"
-                  tick={{
-                    fill: "oklch(0.52 0.01 220)",
-                    fontSize: 9,
-                    fontFamily: "JetBrainsMono",
-                  }}
-                  tickLine={false}
-                  axisLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis
-                  tick={{
-                    fill: "oklch(0.52 0.01 220)",
-                    fontSize: 9,
-                    fontFamily: "JetBrainsMono",
-                  }}
-                  tickLine={false}
-                  axisLine={false}
-                  domain={["auto", "auto"]}
-                  width={60}
-                  tickFormatter={(v) => v.toFixed(selectedConfig.precision)}
-                />
-                <RechartsTooltip
-                  contentStyle={{
-                    background: "oklch(0.13 0.01 240)",
-                    border: "1px solid oklch(0.22 0.012 240)",
-                    borderRadius: "4px",
-                    fontSize: "11px",
-                    fontFamily: "JetBrainsMono",
-                  }}
-                  labelStyle={{ color: "oklch(0.52 0.01 220)" }}
-                  itemStyle={{
-                    color: isChartUp
-                      ? "oklch(0.72 0.18 145)"
-                      : "oklch(0.62 0.22 27)",
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="price"
-                  stroke={
-                    isChartUp ? "oklch(0.72 0.18 145)" : "oklch(0.62 0.22 27)"
-                  }
-                  strokeWidth={1.5}
-                  fill={
-                    isChartUp
-                      ? "url(#chartGradientUp)"
-                      : "url(#chartGradientDown)"
-                  }
-                  dot={false}
-                  animationDuration={300}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            <ChartCanvas
+              chartType={chartType}
+              candles={candleData}
+              chartData={chartData}
+              openTrades={openTrades}
+              selectedConfig={selectedConfig}
+              isUp={isChartUp}
+            />
+
+            {/* Trade marker overlay */}
+            <TradeChartOverlay
+              trades={chartRenderTrades}
+              chartData={chartData}
+              containerRef={chartContainerRef}
+              priceMin={priceMin}
+              priceMax={priceMax}
+              onMarkerClick={(trade, x, y) => setActivePopup({ trade, x, y })}
+            />
           </div>
         </main>
 
         {/* Right panel: Signals + Order + Positions */}
         <aside className="hidden lg:flex flex-col w-80 shrink-0 border-l border-border overflow-hidden">
-          {/* Signals panel — takes available space */}
+          {/* Signals panel */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <SignalsPanel
               currentSignal={currentSignal}
@@ -502,16 +558,23 @@ export function DashboardPage() {
 
           <Separator />
 
-          {/* Order entry + Open positions — fixed bottom section */}
+          {/* Order entry + Open positions */}
           <div className="h-72 flex flex-col overflow-hidden shrink-0">
             <ScrollArea className="flex-1">
               {/* Order entry */}
               <div className="p-3 border-b border-border">
                 <div className="text-[10px] font-semibold text-muted-foreground mb-2">
                   PLACE ORDER
+                  {dailyLossLimitHit && (
+                    <span
+                      className="ml-2 text-[9px]"
+                      style={{ color: "oklch(0.82 0.12 27)" }}
+                    >
+                      (Trading paused)
+                    </span>
+                  )}
                 </div>
 
-                {/* Buy/Sell toggle */}
                 <div className="flex rounded overflow-hidden border border-border mb-3">
                   <button
                     type="button"
@@ -563,7 +626,7 @@ export function DashboardPage() {
                       <span className="font-mono-num text-foreground">
                         {selectedPrice?.price.toFixed(
                           selectedConfig.precision,
-                        ) ?? "—"}
+                        ) ?? "\u2014"}
                       </span>
                     </div>
                     <div className="flex justify-between text-muted-foreground">
@@ -579,11 +642,14 @@ export function DashboardPage() {
 
                   <Button
                     onClick={handlePlaceOrder}
+                    disabled={dailyLossLimitHit}
                     data-ocid="dashboard.place_order_button"
                     className={`w-full h-7 text-xs font-bold ${
-                      order.side === "buy"
-                        ? "bg-buy/20 border border-buy/40 text-buy hover:bg-buy/30"
-                        : "bg-sell/20 border border-sell/40 text-sell hover:bg-sell/30"
+                      dailyLossLimitHit
+                        ? "opacity-50 cursor-not-allowed"
+                        : order.side === "buy"
+                          ? "bg-buy/20 border border-buy/40 text-buy hover:bg-buy/30"
+                          : "bg-sell/20 border border-sell/40 text-sell hover:bg-sell/30"
                     }`}
                   >
                     {order.side === "buy" ? (
@@ -591,8 +657,9 @@ export function DashboardPage() {
                     ) : (
                       <TrendingDown className="w-3 h-3 mr-1" />
                     )}
-                    {order.side.toUpperCase()}{" "}
-                    {selectedConfig.symbol.split("/")[0]}
+                    {dailyLossLimitHit
+                      ? "Trading Paused"
+                      : `${order.side.toUpperCase()} ${selectedConfig.symbol.split("/")[0]}`}
                   </Button>
                 </div>
               </div>
@@ -626,16 +693,35 @@ export function DashboardPage() {
                           <span className="font-semibold text-[10px]">
                             {pos.symbol}
                           </span>
-                          <Badge
-                            variant="outline"
-                            className={`text-[9px] py-0 ${
-                              pos.side === "buy"
-                                ? "bg-buy border-buy text-buy"
-                                : "bg-sell border-sell text-sell"
-                            }`}
-                          >
-                            {pos.side.toUpperCase()}
-                          </Badge>
+                          <div className="flex items-center gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`text-[9px] py-0 ${
+                                pos.side === "buy"
+                                  ? "bg-buy border-buy text-buy"
+                                  : "bg-sell border-sell text-sell"
+                              }`}
+                            >
+                              {pos.side.toUpperCase()}
+                            </Badge>
+                            <button
+                              type="button"
+                              data-ocid={`positions.delete_button.${displayIdx + 1}`}
+                              onClick={() => {
+                                closeTrade(
+                                  pos.id,
+                                  pos.currentPrice,
+                                  chartData.length - 1,
+                                );
+                                setPositions((prev) =>
+                                  prev.filter((p) => p.id !== pos.id),
+                                );
+                              }}
+                              className="text-[9px] text-muted-foreground hover:text-sell px-1 py-0 rounded transition-colors"
+                            >
+                              Close
+                            </button>
+                          </div>
                         </div>
                         <div className="grid grid-cols-2 gap-x-2 text-[9px] text-muted-foreground">
                           <span>
@@ -672,6 +758,111 @@ export function DashboardPage() {
           </div>
         </aside>
       </div>
+
+      {/* Bottom row: Market Analysis + Signal History mini-table */}
+      <div className="border-t border-border shrink-0 flex flex-col md:flex-row h-auto md:h-72 overflow-hidden">
+        {/* Market Analysis Panel */}
+        <div className="flex-1 min-w-0 border-b md:border-b-0 md:border-r border-border overflow-hidden">
+          <MarketAnalysisPanel
+            analysis={analysis}
+            symbol={selectedSymbol}
+            mtf={mtf}
+          />
+        </div>
+
+        {/* Mini Signal History */}
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+          <div className="px-3 pt-3 pb-2 shrink-0">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-2 h-2 rounded-full bg-buy animate-pulse-green shrink-0"
+                style={{ boxShadow: "0 0 6px oklch(0.72 0.18 145 / 0.7)" }}
+              />
+              <span className="text-[10px] font-semibold text-muted-foreground tracking-widest uppercase">
+                Recent Signals
+              </span>
+              <span className="ml-auto text-[9px] text-muted-foreground font-mono-num">
+                {selectedSymbol}
+              </span>
+            </div>
+          </div>
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="px-3 pb-3">
+              {signalHistory.length === 0 ? (
+                <div
+                  data-ocid="signals.mini.empty_state"
+                  className="text-center py-6 text-[10px] text-muted-foreground"
+                >
+                  Awaiting signals...
+                </div>
+              ) : (
+                <div className="space-y-px">
+                  {signalHistory.slice(0, 5).map((sig, idx) => (
+                    <div
+                      key={sig.id}
+                      data-ocid={`signals.mini.row.${idx + 1}`}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded text-[9px] ${
+                        idx % 2 === 0 ? "bg-secondary/30" : ""
+                      }`}
+                    >
+                      <span className="font-mono-num text-muted-foreground w-16 shrink-0">
+                        {formatSignalTime(sig.timestamp)}
+                      </span>
+                      <span
+                        className={`font-bold text-[10px] w-8 shrink-0 ${
+                          sig.signal === "BUY"
+                            ? "text-buy"
+                            : sig.signal === "SELL"
+                              ? "text-sell"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {sig.signal}
+                      </span>
+                      <div
+                        className="flex-1 rounded-full overflow-hidden"
+                        style={{
+                          height: "4px",
+                          background: "oklch(0.22 0.012 240)",
+                        }}
+                      >
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${sig.confidence}%`,
+                            background:
+                              sig.signal === "BUY"
+                                ? "oklch(0.72 0.18 145)"
+                                : sig.signal === "SELL"
+                                  ? "oklch(0.62 0.22 27)"
+                                  : "oklch(0.52 0.01 220)",
+                          }}
+                        />
+                      </div>
+                      <span className="font-mono-num text-muted-foreground w-8 text-right shrink-0">
+                        {sig.confidence}%
+                      </span>
+                      <span className="text-muted-foreground shrink-0">
+                        {sig.tradeType}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      </div>
+
+      {/* Trade popup */}
+      {activePopup && (
+        <TradePopup
+          trade={activePopup.trade}
+          x={activePopup.x}
+          y={activePopup.y}
+          onClose={() => setActivePopup(null)}
+        />
+      )}
     </div>
   );
 }
