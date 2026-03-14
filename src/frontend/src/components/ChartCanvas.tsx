@@ -822,7 +822,7 @@ export function ChartCanvas({
     ctx.clearRect(0, 0, W, H);
 
     const PL = PLOT_LEFT;
-    const PR = W - 8;
+    const PR = W - 72;
     const PT = PLOT_TOP;
     const PB = H - 22;
     const plotWidth = PR - PL;
@@ -902,6 +902,23 @@ export function ChartCanvas({
       const y = PT + (i / numGridLines) * (PB - PT);
       ctx.fillText(price.toFixed(prec), PL - 4, y + 3);
     }
+
+    // Right Y-axis labels
+    ctx.fillStyle = LABEL_COLOR;
+    ctx.font = "9px JetBrains Mono, monospace";
+    ctx.textAlign = "left";
+    for (let i = 0; i <= numGridLines; i++) {
+      const price2 = pMax - (i / numGridLines) * (pMax - pMin);
+      const y2 = PT + (i / numGridLines) * (PB - PT);
+      ctx.fillText(price2.toFixed(prec), PR + 6, y2 + 3);
+    }
+    // Right axis separator line
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PR, PT);
+    ctx.lineTo(PR, PB);
+    ctx.stroke();
 
     // Chart
     if (ct === "candlestick") {
@@ -1193,15 +1210,18 @@ export function ChartCanvas({
       const lineColor = liveP >= prevClose ? "#26a69a" : "#ef5350";
 
       ctx.save();
+
+      // Dashed line spanning full width from plot left to canvas right edge
       ctx.strokeStyle = lineColor;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(PL, ly);
-      ctx.lineTo(PR, ly);
+      ctx.lineTo(W, ly);
       ctx.stroke();
       ctx.setLineDash([]);
 
+      // Price label box in right Y-axis panel
       const prec2 = sc.precision;
       const labelText = liveP.toFixed(prec2);
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
@@ -1209,7 +1229,7 @@ export function ChartCanvas({
       const labelPad = 4;
       const boxW = textW + labelPad * 2;
       const boxH = 16;
-      const boxX = PR;
+      const boxX = PR + 2;
       const boxY = ly - boxH / 2;
 
       ctx.fillStyle = lineColor;
@@ -1217,47 +1237,34 @@ export function ChartCanvas({
       ctx.fillStyle = "#ffffff";
       ctx.textAlign = "left";
       ctx.fillText(labelText, boxX + labelPad, ly + 4);
-      ctx.restore();
-    }
 
-    // ── Candle Countdown Timer ────────────────────────────────────────────
-    const secs = p.secondsRemaining;
-    const tf = p.selectedTimeframe ?? "1h";
-    if (
-      secs !== undefined &&
-      secs >= 0 &&
-      (visibleCandles.length > 0 || visibleData.length > 0)
-    ) {
-      const shortTFs = ["1m", "3m", "5m", "15m"];
-      let timerText: string;
-      if (shortTFs.includes(tf)) {
-        const mm = Math.floor(secs / 60)
-          .toString()
-          .padStart(2, "0");
-        const ss = (secs % 60).toString().padStart(2, "0");
-        timerText = `${mm}:${ss}`;
-      } else {
-        const hh = Math.floor(secs / 3600)
-          .toString()
-          .padStart(2, "0");
-        const mm2 = Math.floor((secs % 3600) / 60)
-          .toString()
-          .padStart(2, "0");
-        timerText = `${hh}:${mm2}`;
+      // ── Candle Countdown Timer (just below the price label) ──
+      const secs = p.secondsRemaining;
+      const tf = p.selectedTimeframe ?? "1h";
+      if (secs !== undefined && secs >= 0) {
+        const shortTFs = ["1m", "3m", "5m", "15m"];
+        let timerText: string;
+        if (shortTFs.includes(tf)) {
+          const mm = Math.floor(secs / 60)
+            .toString()
+            .padStart(2, "0");
+          const ss = (secs % 60).toString().padStart(2, "0");
+          timerText = `${mm}:${ss}`;
+        } else {
+          const hh = Math.floor(secs / 3600)
+            .toString()
+            .padStart(2, "0");
+          const mm2 = Math.floor((secs % 3600) / 60)
+            .toString()
+            .padStart(2, "0");
+          timerText = `${hh}:${mm2}`;
+        }
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.fillStyle = lineColor;
+        ctx.textAlign = "left";
+        ctx.fillText(timerText, boxX, boxY + boxH + 12);
       }
 
-      const lastIdx =
-        ct === "candlestick" || ct === "bar"
-          ? visibleCandles.length - 1
-          : visibleData.length - 1;
-      const lastX = PL + (lastIdx + 1) * cw;
-      const textY = PB - 4;
-
-      ctx.save();
-      ctx.font = '9px "JetBrains Mono", monospace';
-      ctx.fillStyle = "#888888";
-      ctx.textAlign = "left";
-      ctx.fillText(timerText, Math.min(lastX, PR - 40), textY);
       ctx.restore();
     }
   }, []);
