@@ -86,6 +86,9 @@ interface ChartCanvasProps {
   onDrawingRightClick: (drawingId: string, x: number, y: number) => void;
   showEMA?: boolean;
   showVWAP?: boolean;
+  livePrice?: number;
+  secondsRemaining?: number;
+  selectedTimeframe?: string;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
 }
@@ -703,6 +706,9 @@ export function ChartCanvas({
   onDrawingRightClick,
   showEMA = true,
   showVWAP = true,
+  livePrice,
+  secondsRemaining,
+  selectedTimeframe,
 }: ChartCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -747,6 +753,9 @@ export function ChartCanvas({
     onDrawingRightClick,
     showEMA,
     showVWAP,
+    livePrice,
+    secondsRemaining,
+    selectedTimeframe,
   });
   propsRef.current = {
     chartType,
@@ -772,6 +781,9 @@ export function ChartCanvas({
     onDrawingRightClick,
     showEMA,
     showVWAP,
+    livePrice,
+    secondsRemaining,
+    selectedTimeframe,
   };
   smcSetTooltipRef.current = setSmcTooltip;
 
@@ -1158,6 +1170,85 @@ export function ChartCanvas({
     if (p.drawingInProgress) {
       renderDrawing(ctx, p.drawingInProgress, vp, false, true);
     }
+    // ── Live Price Line ──────────────────────────────────────────────────
+    const liveP = p.livePrice;
+    if (liveP !== undefined && liveP > 0 && liveP >= pMin && liveP <= pMax) {
+      const ly = mapY(liveP, pMin, pMax, PT, PB);
+      const lastCandle =
+        visibleCandles.length > 0
+          ? visibleCandles[visibleCandles.length - 1]
+          : null;
+      const prevClose = lastCandle?.close ?? liveP;
+      const lineColor = liveP >= prevClose ? "#26a69a" : "#ef5350";
+
+      ctx.save();
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(PL, ly);
+      ctx.lineTo(PR, ly);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const prec2 = sc.precision;
+      const labelText = liveP.toFixed(prec2);
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      const textW = ctx.measureText(labelText).width;
+      const labelPad = 4;
+      const boxW = textW + labelPad * 2;
+      const boxH = 16;
+      const boxX = PR;
+      const boxY = ly - boxH / 2;
+
+      ctx.fillStyle = lineColor;
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "left";
+      ctx.fillText(labelText, boxX + labelPad, ly + 4);
+      ctx.restore();
+    }
+
+    // ── Candle Countdown Timer ────────────────────────────────────────────
+    const secs = p.secondsRemaining;
+    const tf = p.selectedTimeframe ?? "1h";
+    if (
+      secs !== undefined &&
+      secs >= 0 &&
+      (visibleCandles.length > 0 || visibleData.length > 0)
+    ) {
+      const shortTFs = ["1m", "3m", "5m", "15m"];
+      let timerText: string;
+      if (shortTFs.includes(tf)) {
+        const mm = Math.floor(secs / 60)
+          .toString()
+          .padStart(2, "0");
+        const ss = (secs % 60).toString().padStart(2, "0");
+        timerText = `${mm}:${ss}`;
+      } else {
+        const hh = Math.floor(secs / 3600)
+          .toString()
+          .padStart(2, "0");
+        const mm2 = Math.floor((secs % 3600) / 60)
+          .toString()
+          .padStart(2, "0");
+        timerText = `${hh}:${mm2}`;
+      }
+
+      const lastIdx =
+        ct === "candlestick" || ct === "bar"
+          ? visibleCandles.length - 1
+          : visibleData.length - 1;
+      const lastX = PL + (lastIdx + 1) * cw;
+      const textY = PB - 4;
+
+      ctx.save();
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.fillStyle = "#888888";
+      ctx.textAlign = "left";
+      ctx.fillText(timerText, Math.min(lastX, PR - 40), textY);
+      ctx.restore();
+    }
   }, []);
 
   useEffect(() => {
@@ -1431,6 +1522,9 @@ export function ChartCanvas({
     smcVisibility,
     showEMA,
     showVWAP,
+    livePrice,
+    secondsRemaining,
+    selectedTimeframe,
     draw,
   ]);
 

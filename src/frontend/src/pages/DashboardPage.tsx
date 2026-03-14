@@ -572,6 +572,9 @@ export function DashboardPage() {
                 }
                 showEMA={true}
                 showVWAP={true}
+                livePrice={selectedPrice?.price ?? 0}
+                secondsRemaining={secondsRemaining}
+                selectedTimeframe={timeframe}
               />
 
               {/* Trade marker overlay */}
