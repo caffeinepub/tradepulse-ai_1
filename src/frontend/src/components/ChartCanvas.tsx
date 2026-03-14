@@ -729,6 +729,8 @@ export function ChartCanvas({
     isDrawing: false,
   });
 
+  const canvasSizeRef = useRef({ w: 0, h: 0, dpr: 0 });
+
   const propsRef = useRef({
     chartType,
     candles,
@@ -806,11 +808,14 @@ export function ChartCanvas({
     const H = container.clientHeight;
     if (W === 0 || H === 0) return;
 
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = `${W}px`;
-    canvas.style.height = `${H}px`;
-
+    const sz = canvasSizeRef.current;
+    if (sz.w !== W || sz.h !== H || sz.dpr !== dpr) {
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = `${W}px`;
+      canvas.style.height = `${H}px`;
+      canvasSizeRef.current = { w: W, h: H, dpr };
+    }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.scale(dpr, dpr);
@@ -852,6 +857,12 @@ export function ChartCanvas({
       pMax = Math.max(...visibleData.map((d) => d.price));
     }
 
+    // Include live price in range so the line is always visible
+    const liveRaw = p.livePrice;
+    if (liveRaw !== undefined && liveRaw > 0) {
+      pMin = Math.min(pMin, liveRaw);
+      pMax = Math.max(pMax, liveRaw);
+    }
     const pad = (pMax - pMin) * 0.08;
     pMin -= pad;
     pMax += pad;
@@ -1172,7 +1183,7 @@ export function ChartCanvas({
     }
     // ── Live Price Line ──────────────────────────────────────────────────
     const liveP = p.livePrice;
-    if (liveP !== undefined && liveP > 0 && liveP >= pMin && liveP <= pMax) {
+    if (liveP !== undefined && liveP > 0) {
       const ly = mapY(liveP, pMin, pMax, PT, PB);
       const lastCandle =
         visibleCandles.length > 0
@@ -1504,7 +1515,8 @@ export function ChartCanvas({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: draw reads all props via propsRef.current
   useEffect(() => {
-    draw();
+    const raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
   }, [
     chartType,
     candles,

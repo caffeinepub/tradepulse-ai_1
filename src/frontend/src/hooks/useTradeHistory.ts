@@ -43,6 +43,8 @@ export function useTradeHistory(
   const dailyKeyRef = useRef(todayKey());
   const lastSignalIdRef = useRef<string | null>(null);
   const openSignalTradeIdRef = useRef<string | null>(null);
+  const lastSignalOpenTimeRef = useRef<number>(0);
+  const lastSignalDirectionRef = useRef<string | null>(null);
   const symbolRef = useRef(symbol);
   const chartDataRef = useRef(chartData);
   chartDataRef.current = chartData;
@@ -136,6 +138,8 @@ export function useTradeHistory(
   );
 
   // Auto-open/close signal trades
+  // Throttle: only open a new trade when direction changes OR >= 60s cooldown
+  const SIGNAL_COOLDOWN_MS = 60_000;
   useEffect(() => {
     if (signalHistory.length === 0) return;
     const latest = signalHistory[0];
@@ -146,6 +150,14 @@ export function useTradeHistory(
     }
     lastSignalIdRef.current = latest.id;
 
+    const now = Date.now();
+    const directionChanged = lastSignalDirectionRef.current !== latest.signal;
+    const cooldownElapsed =
+      now - lastSignalOpenTimeRef.current >= SIGNAL_COOLDOWN_MS;
+
+    // Only proceed if direction changed or cooldown has elapsed
+    if (!directionChanged && !cooldownElapsed) return;
+
     // Close any open signal trade first
     if (openSignalTradeIdRef.current) {
       const idx = chartDataRef.current.length - 1;
@@ -153,8 +165,7 @@ export function useTradeHistory(
       openSignalTradeIdRef.current = null;
     }
 
-    // Daily loss limit stops new demo trades - but signal trades are from signal engine
-    // Per spec: loss limit stops ALL new demo trades (both signal-triggered and demo)
+    // Daily loss limit stops new demo trades
     if (dailyLossLimitHit) {
       return;
     }
@@ -173,6 +184,8 @@ export function useTradeHistory(
       tp3: latest.tp3,
     });
     openSignalTradeIdRef.current = newTrade.id;
+    lastSignalOpenTimeRef.current = now;
+    lastSignalDirectionRef.current = latest.signal;
   }, [signalHistory, openTrade, closeTrade, dailyLossLimitHit]);
 
   // chartRenderTrades: last 50 for chart display

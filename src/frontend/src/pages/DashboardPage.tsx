@@ -225,7 +225,7 @@ export function DashboardPage() {
           setCandleData((prev) => updateLiveCandle(prev, livePrice, config));
         }
       }
-    }, 3000);
+    }, 100);
     return () => clearInterval(interval);
   }, [selectedSymbol]);
 
