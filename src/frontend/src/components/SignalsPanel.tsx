@@ -2,14 +2,41 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Bell, BellOff, Minus, TrendingDown, TrendingUp } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { AISignal } from "../utils/aiSignalEngine";
 
 interface SignalsPanelProps {
   currentSignal: AISignal | null;
   history: AISignal[];
   symbol: string;
+  scalpsToday?: number;
+}
+
+function TradeTypeBadge({
+  type,
+  scalpsToday,
+}: {
+  type: AISignal["tradeType"];
+  scalpsToday?: number;
+}) {
+  const map = {
+    Scalp: "bg-amber-500/15 border-amber-500/40 text-amber-400",
+    Intraday: "bg-blue-500/15 border-blue-500/40 text-blue-400",
+    Swing: "bg-purple-500/15 border-purple-500/40 text-purple-400",
+    Position: "bg-emerald-500/15 border-emerald-500/40 text-emerald-400",
+  };
+  return (
+    <Badge
+      variant="outline"
+      className={`text-[9px] px-1.5 py-0 border ${map[type]}`}
+    >
+      {type}
+      {type === "Scalp" && scalpsToday !== undefined && scalpsToday > 0 && (
+        <span className="ml-1 opacity-70">({scalpsToday}/3)</span>
+      )}
+    </Badge>
+  );
 }
 
 function SignalBadge({ signal }: { signal: AISignal["signal"] }) {
@@ -51,17 +78,70 @@ function useSecondsAgo(timestamp: Date | null): number {
   return seconds;
 }
 
+function playBeep(freq = 880, duration = 0.15) {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+    osc.onended = () => ctx.close();
+  } catch (_) {
+    // Audio context not available — silently ignore
+  }
+}
+
 export function SignalsPanel({
   currentSignal,
   history,
   symbol,
+  scalpsToday,
 }: SignalsPanelProps) {
   const secondsAgo = useSecondsAgo(currentSignal?.timestamp ?? null);
+  const prevSignalIdRef = useRef<string | null>(null);
+  const [flashBorder, setFlashBorder] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [notifDot, setNotifDot] = useState(false);
+
+  // Alert system: detect new signals
+  useEffect(() => {
+    if (!currentSignal) return;
+    if (currentSignal.id === prevSignalIdRef.current) return;
+    if (currentSignal.signal === "HOLD") {
+      prevSignalIdRef.current = currentSignal.id;
+      return;
+    }
+    const isNew = prevSignalIdRef.current !== null;
+    prevSignalIdRef.current = currentSignal.id;
+    if (!isNew) return;
+
+    if (currentSignal.tradeType === "Scalp") {
+      // Always flash + beep for scalp
+      playBeep(880, 0.15);
+      setFlashBorder(true);
+      setTimeout(() => setFlashBorder(false), 1200);
+    } else if (soundEnabled) {
+      // Non-scalp: only beep if sound enabled
+      playBeep(660, 0.1);
+      setNotifDot(true);
+      setTimeout(() => setNotifDot(false), 4000);
+    } else {
+      setNotifDot(true);
+      setTimeout(() => setNotifDot(false), 4000);
+    }
+  }, [currentSignal, soundEnabled]);
 
   return (
     <div
       data-ocid="signals.panel"
-      className="flex flex-col h-full bg-card border-l border-border overflow-hidden"
+      className={`flex flex-col h-full bg-card border-l border-border overflow-hidden transition-all duration-300 ${
+        flashBorder ? "ring-2 ring-amber-400/60" : ""
+      }`}
     >
       {/* Live Signal Header */}
       <div className="px-3 pt-3 pb-2 shrink-0">
@@ -73,9 +153,28 @@ export function SignalsPanel({
           <span className="text-[10px] font-semibold text-muted-foreground tracking-widest uppercase">
             Live Signal
           </span>
+          {notifDot && (
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+          )}
           <span className="ml-auto text-[9px] text-muted-foreground font-mono-num">
             {symbol}
           </span>
+          {/* Sound toggle for non-scalp signals */}
+          <button
+            type="button"
+            data-ocid="signals.sound_toggle"
+            onClick={() => setSoundEnabled((v) => !v)}
+            className="ml-1 text-muted-foreground hover:text-foreground transition-colors"
+            title={
+              soundEnabled ? "Mute non-scalp alerts" : "Enable non-scalp alerts"
+            }
+          >
+            {soundEnabled ? (
+              <Bell className="w-3 h-3" />
+            ) : (
+              <BellOff className="w-3 h-3" />
+            )}
+          </button>
         </div>
 
         {currentSignal ? (
@@ -90,7 +189,7 @@ export function SignalsPanel({
             }`}
           >
             {/* Signal + Trade Type */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-1.5">
                 <span
                   className={`font-display font-bold text-lg leading-none ${
@@ -104,12 +203,18 @@ export function SignalsPanel({
                   {currentSignal.signal}
                 </span>
               </div>
-              <Badge
-                variant="outline"
-                className="text-[9px] border-border text-muted-foreground px-1.5 py-0"
-              >
-                {currentSignal.tradeType}
-              </Badge>
+              <div className="flex items-center gap-1">
+                <TradeTypeBadge
+                  type={currentSignal.tradeType}
+                  scalpsToday={scalpsToday}
+                />
+                <Badge
+                  variant="outline"
+                  className="text-[9px] border-border text-muted-foreground/60 px-1.5 py-0"
+                >
+                  {currentSignal.expectedDuration}
+                </Badge>
+              </div>
             </div>
 
             {/* Confidence bar */}
@@ -249,7 +354,14 @@ export function SignalsPanel({
               </div>
             </div>
 
-            <div className="mt-2 text-[9px] text-muted-foreground">
+            {/* Confirmation reason */}
+            {currentSignal.confirmationReason && (
+              <div className="mt-2 text-[9px] text-muted-foreground/70 italic leading-tight border-t border-border/30 pt-1.5">
+                {currentSignal.confirmationReason}
+              </div>
+            )}
+
+            <div className="mt-1.5 text-[9px] text-muted-foreground">
               Updated {secondsAgo}s ago
             </div>
           </div>
@@ -309,9 +421,7 @@ export function SignalsPanel({
                         {sig.trend}
                       </span>
                       <span className="text-muted-foreground">·</span>
-                      <span className="text-muted-foreground">
-                        {sig.tradeType}
-                      </span>
+                      <TradeTypeBadge type={sig.tradeType} />
                     </div>
                   </div>
                   <div className="flex items-center justify-between font-mono-num">
@@ -353,6 +463,11 @@ export function SignalsPanel({
                       {sig.confidence}%
                     </span>
                   </div>
+                  {sig.confirmationReason && (
+                    <div className="text-[8px] text-muted-foreground/60 italic truncate">
+                      {sig.confirmationReason}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

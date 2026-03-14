@@ -19,6 +19,9 @@ export function useAISignals(
   sentimentStrength?: number,
   smcContext?: SMCSignalContext,
   optimizerWeights?: FactorWeights,
+  selectedTimeframe?: string,
+  scalpsToday?: number,
+  positionSize?: number,
 ): { currentSignal: AISignal | null; history: AISignal[] } {
   const [currentSignal, setCurrentSignal] = useState<AISignal | null>(null);
   const [history, setHistory] = useState<AISignal[]>([]);
@@ -28,12 +31,18 @@ export function useAISignals(
   const sentimentRef = useRef({ overallSentiment, sentimentStrength });
   const smcContextRef = useRef(smcContext);
   const optimizerWeightsRef = useRef(optimizerWeights);
+  const timeframeRef = useRef(selectedTimeframe);
+  const scalpsTodayRef = useRef(scalpsToday);
+  const positionSizeRef = useRef(positionSize);
 
   analysisRef.current = analysis;
   mtfRef.current = mtf;
   sentimentRef.current = { overallSentiment, sentimentStrength };
   smcContextRef.current = smcContext;
   optimizerWeightsRef.current = optimizerWeights;
+  timeframeRef.current = selectedTimeframe;
+  scalpsTodayRef.current = scalpsToday;
+  positionSizeRef.current = positionSize;
 
   useEffect(() => {
     if (prevSymbolRef.current !== symbol) {
@@ -54,6 +63,9 @@ export function useAISignals(
         mtfRef.current,
         sentimentRef.current.overallSentiment,
         sentimentRef.current.sentimentStrength,
+        timeframeRef.current,
+        scalpsTodayRef.current,
+        positionSizeRef.current,
       );
 
       // ── Apply SMC context adjustments ────────────────────────────────
@@ -67,7 +79,6 @@ export function useAISignals(
         if (smc.bosConfirmed && sig === "BUY") conf = Math.min(95, conf + 5);
         if (smc.chochWarning && (sig === "BUY" || sig === "SELL")) {
           conf = Math.max(40, conf - 8);
-          // If confidence drops below threshold, push to HOLD
           if (conf < 50) sig = "HOLD";
         }
 

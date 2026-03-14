@@ -19,7 +19,10 @@ export interface AISignal {
     structureSignals: number;
   };
   trend: "Bullish" | "Bearish" | "Sideways";
-  tradeType: "Scalp" | "Intraday" | "Swing";
+  tradeType: "Scalp" | "Intraday" | "Swing" | "Position";
+  confirmationReason: string;
+  expectedDuration: string;
+  positionSize: number;
   timestamp: Date;
 }
 
@@ -31,6 +34,43 @@ function ema(prices: number[], period: number): number {
     val = prices[i] * k + val * (1 - k);
   }
   return val;
+}
+
+function rsi(prices: number[], period = 14): number {
+  if (prices.length < period + 1) return 50;
+  let gains = 0;
+  let losses = 0;
+  for (let i = prices.length - period; i < prices.length; i++) {
+    const diff = prices[i] - prices[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  if (losses === 0) return 100;
+  const rs = gains / losses;
+  return 100 - 100 / (1 + rs);
+}
+
+function macd(prices: number[]): { histogram: number; signal: number } {
+  if (prices.length < 26) return { histogram: 0, signal: 0 };
+  const ema12 = ema(prices.slice(-12), 12);
+  const ema26 = ema(prices.slice(-26), 26);
+  const macdLine = ema12 - ema26;
+  // Signal line = EMA9 of MACD
+  // Approximate: use last 9 macd values
+  const macdValues: number[] = [];
+  for (let i = Math.max(0, prices.length - 35); i < prices.length; i++) {
+    const slice = prices.slice(0, i + 1);
+    if (slice.length < 26) {
+      macdValues.push(0);
+      continue;
+    }
+    const e12 = ema(slice.slice(-12), 12);
+    const e26 = ema(slice.slice(-26), 26);
+    macdValues.push(e12 - e26);
+  }
+  const signalLine =
+    macdValues.length >= 9 ? ema(macdValues.slice(-9), 9) : macdLine;
+  return { histogram: macdLine - signalLine, signal: signalLine };
 }
 
 function stddev(prices: number[]): number {
@@ -45,6 +85,18 @@ function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
+function getTradeTypeFromTimeframe(
+  tf: string | undefined,
+): "Scalp" | "Intraday" | "Swing" | "Position" | null {
+  if (!tf) return null;
+  const t = tf.toLowerCase();
+  if (t === "1m" || t === "3m" || t === "5m") return "Scalp";
+  if (t === "15m" || t === "30m") return "Intraday";
+  if (t === "1h" || t === "4h") return "Swing";
+  if (t === "1d") return "Position";
+  return null;
+}
+
 export function generateSignal(
   symbol: string,
   price: number,
@@ -53,11 +105,17 @@ export function generateSignal(
   mtf?: MultiTimeframeAnalysis | null,
   overallSentiment?: "Bullish" | "Bearish" | "Neutral",
   sentimentStrength?: number,
+  selectedTimeframe?: string,
+  scalpsToday?: number,
+  positionSize?: number,
 ): AISignal {
   const prices = chartData.map((d) => d.price);
+  const lotSize = positionSize ?? 0.05;
 
   const shortEMA = prices.length >= 5 ? ema(prices.slice(-5), 5) : price;
   const longEMA = prices.length >= 20 ? ema(prices.slice(-20), 20) : price;
+  const ema20 = prices.length >= 20 ? ema(prices.slice(-20), 20) : price;
+  const ema50 = prices.length >= 50 ? ema(prices.slice(-50), 50) : price;
 
   const price10ago = prices.length >= 10 ? prices[prices.length - 10] : price;
   const momentum =
@@ -68,6 +126,10 @@ export function generateSignal(
     last20.length > 1
       ? stddev(last20) / (last20.reduce((a, b) => a + b, 0) / last20.length)
       : 0;
+
+  // RSI and MACD
+  const rsiValue = rsi(prices, 14);
+  const macdResult = macd(prices);
 
   let signalType: "BUY" | "SELL" | "HOLD";
   if (shortEMA > longEMA && momentum > 0.1) {
@@ -87,9 +149,24 @@ export function generateSignal(
 
   const priceVsEmaScore =
     longEMA !== 0 ? Math.abs((price - longEMA) / longEMA) * 300 : 0;
-  const indicatorConfluence = Math.round(
+  let indicatorConfluence = Math.round(
     clamp(priceVsEmaScore + (vol > 0.001 ? 8 : 4), 0, 25),
   );
+
+  // RSI adjustments
+  if (rsiValue > 50 && signalType === "BUY")
+    indicatorConfluence = Math.min(25, indicatorConfluence + 3);
+  if (rsiValue < 50 && signalType === "SELL")
+    indicatorConfluence = Math.min(25, indicatorConfluence + 3);
+  if (rsiValue > 70 && signalType === "BUY")
+    indicatorConfluence = Math.max(0, indicatorConfluence - 4);
+  if (rsiValue < 30 && signalType === "SELL")
+    indicatorConfluence = Math.max(0, indicatorConfluence - 4);
+  // MACD adjustments
+  if (macdResult.histogram > 0 && signalType === "BUY")
+    indicatorConfluence = Math.min(25, indicatorConfluence + 3);
+  if (macdResult.histogram < 0 && signalType === "SELL")
+    indicatorConfluence = Math.min(25, indicatorConfluence + 3);
 
   const volScore = vol * 2000;
   const volumeConfirmation = Math.round(clamp(volScore, 2, 25));
@@ -113,31 +190,28 @@ export function generateSignal(
     volumeConfirmation +
     structureSignals;
 
-  // ── Apply market analysis (single-TF) bias ───────────────────────────────
+  // ── Apply market analysis bias ───────────────────────────────────────────
   if (analysis) {
     const { trend, momentumScore } = analysis;
-
     if (trend === "Bullish") {
-      if (signalType === "BUY") {
+      if (signalType === "BUY")
         confidence = Math.min(95, Math.round(confidence * 1.1));
-      } else if (signalType === "SELL" && confidence < 65) {
+      else if (signalType === "SELL" && confidence < 65) {
         signalType = "HOLD";
         confidence = Math.round(confidence * 0.9);
       }
     } else if (trend === "Bearish") {
-      if (signalType === "SELL") {
+      if (signalType === "SELL")
         confidence = Math.min(95, Math.round(confidence * 1.1));
-      } else if (signalType === "BUY" && confidence < 65) {
+      else if (signalType === "BUY" && confidence < 65) {
         signalType = "HOLD";
         confidence = Math.round(confidence * 0.9);
       }
     } else if (trend === "Sideways") {
       confidence = Math.round(confidence * 0.92);
-      if ((signalType === "BUY" || signalType === "SELL") && confidence < 60) {
+      if ((signalType === "BUY" || signalType === "SELL") && confidence < 60)
         signalType = "HOLD";
-      }
     }
-
     if (
       momentumScore >= 70 &&
       ((trend === "Bullish" && signalType === "BUY") ||
@@ -147,56 +221,50 @@ export function generateSignal(
     }
   }
 
-  // ── Apply Multi-Timeframe confluence rules ──────────────────────────────
+  // ── Apply MTF confluence rules ──────────────────────────────────────────
   if (mtf) {
     const { higherTFBias, entryAlignment, confluenceBias, confluenceScore } =
       mtf;
-
     if (higherTFBias === "Conflict") {
       if (signalType !== "HOLD") signalType = "HOLD";
       confidence = Math.round(confidence * 0.75);
     } else if (higherTFBias === "Bullish") {
       if (entryAlignment >= 2) {
-        if (signalType === "BUY") {
+        if (signalType === "BUY")
           confidence = Math.min(95, Math.round(confidence * 1.18));
-        } else if (signalType === "SELL") {
+        else if (signalType === "SELL") {
           signalType = "HOLD";
           confidence = Math.round(confidence * 0.7);
         }
       } else {
-        if (signalType === "BUY") {
-          confidence = Math.round(confidence * 0.88);
-        } else if (signalType === "SELL") {
+        if (signalType === "BUY") confidence = Math.round(confidence * 0.88);
+        else if (signalType === "SELL") {
           signalType = "HOLD";
           confidence = Math.round(confidence * 0.72);
         }
       }
     } else if (higherTFBias === "Bearish") {
       if (entryAlignment >= 2) {
-        if (signalType === "SELL") {
+        if (signalType === "SELL")
           confidence = Math.min(95, Math.round(confidence * 1.18));
-        } else if (signalType === "BUY") {
+        else if (signalType === "BUY") {
           signalType = "HOLD";
           confidence = Math.round(confidence * 0.7);
         }
       } else {
-        if (signalType === "SELL") {
-          confidence = Math.round(confidence * 0.88);
-        } else if (signalType === "BUY") {
+        if (signalType === "SELL") confidence = Math.round(confidence * 0.88);
+        else if (signalType === "BUY") {
           signalType = "HOLD";
           confidence = Math.round(confidence * 0.72);
         }
       }
     } else if (higherTFBias === "Sideways") {
       confidence = Math.round(confidence * 0.88);
-      if ((signalType === "BUY" || signalType === "SELL") && confidence < 58) {
+      if ((signalType === "BUY" || signalType === "SELL") && confidence < 58)
         signalType = "HOLD";
-      }
     }
-
-    if (confluenceBias === signalType && confluenceScore >= 70) {
+    if (confluenceBias === signalType && confluenceScore >= 70)
       confidence = Math.min(95, confidence + 5);
-    }
   }
 
   // ── Apply sentiment nudge ────────────────────────────────────────────────
@@ -224,37 +292,84 @@ export function generateSignal(
 
   confidence = Math.round(clamp(confidence, 40, 95));
 
-  // ── Compute SL and TP levels ─────────────────────────────────────────────
+  // ── Determine trade type from timeframe ─────────────────────────────────
+  let tradeType: AISignal["tradeType"];
+  const tfType = getTradeTypeFromTimeframe(selectedTimeframe);
+  if (tfType) {
+    tradeType = tfType;
+  } else {
+    tradeType = vol > 0.005 ? "Scalp" : vol > 0.002 ? "Intraday" : "Swing";
+  }
+
+  // ── Scalping session limit ───────────────────────────────────────────────
+  let confirmationReason = "";
+  if (
+    tradeType === "Scalp" &&
+    (scalpsToday ?? 0) >= 3 &&
+    signalType !== "HOLD"
+  ) {
+    signalType = "HOLD";
+    confirmationReason = "Scalping session limit reached (3/3 trades today)";
+  }
+
+  // ── Compute ATR and SL/TP by trade type ─────────────────────────────────
   const atr = price * Math.max(vol, 0.002);
+
+  let slMultiplier = 1.5;
+  let tp1Mult = 1.5;
+  let tp2Mult = 2.5;
+  let tp3Mult = 4.0;
+
+  if (tradeType === "Scalp") {
+    slMultiplier = 0.8;
+    tp1Mult = 1.2;
+    tp2Mult = 1.8;
+    tp3Mult = 2.5;
+  } else if (tradeType === "Intraday") {
+    slMultiplier = 1.5;
+    tp1Mult = 2.0;
+    tp2Mult = 3.0;
+    tp3Mult = 4.5;
+  } else if (tradeType === "Swing") {
+    slMultiplier = 2.5;
+    tp1Mult = 3.0;
+    tp2Mult = 5.0;
+    tp3Mult = 7.0;
+  } else if (tradeType === "Position") {
+    slMultiplier = 4.0;
+    tp1Mult = 5.0;
+    tp2Mult = 8.0;
+    tp3Mult = 12.0;
+  }
 
   const stopLoss =
     signalType === "BUY"
-      ? price - 1.5 * atr
+      ? price - slMultiplier * atr
       : signalType === "SELL"
-        ? price + 1.5 * atr
+        ? price + slMultiplier * atr
         : price * (1 - vol * 0.3);
 
   const slDist = Math.abs(price - stopLoss);
 
   const tp1 =
     signalType === "BUY"
-      ? price + 1.5 * atr
+      ? price + tp1Mult * atr
       : signalType === "SELL"
-        ? price - 1.5 * atr
+        ? price - tp1Mult * atr
         : price + atr;
 
   const tp2 =
     signalType === "BUY"
-      ? price + 2.5 * atr
+      ? price + tp2Mult * atr
       : signalType === "SELL"
-        ? price - 2.5 * atr
+        ? price - tp2Mult * atr
         : price + atr * 1.5;
 
   const tp3 =
     signalType === "BUY"
-      ? price + 4 * atr
+      ? price + tp3Mult * atr
       : signalType === "SELL"
-        ? price - 4 * atr
+        ? price - tp3Mult * atr
         : price + atr * 2;
 
   const tpDist = Math.abs(tp1 - price);
@@ -268,8 +383,59 @@ export function generateSignal(
         ? "Bearish"
         : "Sideways";
 
-  const tradeType: AISignal["tradeType"] =
-    vol > 0.005 ? "Scalp" : vol > 0.002 ? "Intraday" : "Swing";
+  // ── Expected duration by trade type ─────────────────────────────────────
+  const durationMap: Record<AISignal["tradeType"], string> = {
+    Scalp: "3–12 min",
+    Intraday: "1–3 hours",
+    Swing: "2–5 days",
+    Position: "2–6 weeks",
+  };
+  const expectedDuration = durationMap[tradeType];
+
+  // ── Build confirmation reason (if not already set by session limit) ──────
+  if (!confirmationReason && signalType !== "HOLD") {
+    const reasons: string[] = [];
+    // Order block proximity
+    if (analysis?.structureEvents?.some((e) => e.type === "BOS")) {
+      reasons.push(signalType === "BUY" ? "BOS confirmed" : "BOS confirmed");
+    }
+    if (analysis?.structureEvents?.some((e) => e.type === "CHOCH")) {
+      reasons.push("CHOCH signal");
+    }
+    // EMA trend
+    if (ema20 > ema50 && signalType === "BUY") reasons.push("EMA(20) uptrend");
+    else if (ema20 < ema50 && signalType === "SELL")
+      reasons.push("EMA(50) downtrend");
+    else if (ema20 !== ema50)
+      reasons.push(
+        signalType === "BUY" ? "EMA(20) uptrend" : "EMA(50) downtrend",
+      );
+    // Volume spike
+    if (vol > 0.003) reasons.push("volume spike");
+    // MACD
+    if (Math.abs(macdResult.histogram) > 0.0001)
+      reasons.push("MACD confirmation");
+    // RSI
+    if (
+      (rsiValue > 55 && signalType === "BUY") ||
+      (rsiValue < 45 && signalType === "SELL")
+    ) {
+      reasons.push("RSI momentum");
+    }
+    // Trend
+    if (analysis?.trend === "Bullish" && signalType === "BUY")
+      reasons.unshift("Bullish order block");
+    else if (analysis?.trend === "Bearish" && signalType === "SELL")
+      reasons.unshift("Bearish order block");
+    confirmationReason =
+      reasons.slice(0, 3).join(" + ") ||
+      (signalType === "BUY" ? "Bullish momentum" : "Bearish momentum");
+  } else if (!confirmationReason) {
+    confirmationReason =
+      analysis?.trend === "Sideways"
+        ? "Market sideways, awaiting breakout"
+        : "Conflicting signals, holding position";
+  }
 
   return {
     id: `${symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -290,6 +456,9 @@ export function generateSignal(
     },
     trend,
     tradeType,
+    confirmationReason,
+    expectedDuration,
+    positionSize: lotSize,
     timestamp: new Date(),
   };
 }

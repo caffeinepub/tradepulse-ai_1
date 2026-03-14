@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Drawing,
   type DrawingPoint,
@@ -44,6 +44,11 @@ const SMC_BOS_UP = "rgba(34,197,94,0.9)";
 const SMC_BOS_DN = "rgba(239,68,68,0.9)";
 const SMC_CHOCH = "rgba(251,146,60,0.9)";
 
+// EMA/VWAP overlay colors
+const EMA20_COLOR = "#d4a020"; // amber ~ oklch(0.72 0.18 60)
+const EMA50_COLOR = "#5b9bd5"; // blue  ~ oklch(0.72 0.16 240)
+const VWAP_COLOR = "#c77dff"; // violet~ oklch(0.82 0.14 300)
+
 interface ViewportInfo {
   pMin: number;
   pMax: number;
@@ -79,6 +84,10 @@ interface ChartCanvasProps {
   onDrawingComplete: (point: DrawingPoint) => void;
   onDrawingClick: (drawingId: string) => void;
   onDrawingRightClick: (drawingId: string, x: number, y: number) => void;
+  showEMA?: boolean;
+  showVWAP?: boolean;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
 }
 
 function mapY(
@@ -692,10 +701,21 @@ export function ChartCanvas({
   onDrawingComplete,
   onDrawingClick,
   onDrawingRightClick,
+  showEMA = true,
+  showVWAP = true,
 }: ChartCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const vpRef = useRef<ViewportInfo | null>(null);
+  const [smcTooltip, setSmcTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    type: string;
+    price: string;
+    direction: string;
+  } | null>(null);
+  const smcSetTooltipRef = useRef(setSmcTooltip);
   const dragRef = useRef({
     isDragging: false,
     startX: 0,
@@ -725,6 +745,8 @@ export function ChartCanvas({
     onDrawingComplete,
     onDrawingClick,
     onDrawingRightClick,
+    showEMA,
+    showVWAP,
   });
   propsRef.current = {
     chartType,
@@ -748,7 +770,10 @@ export function ChartCanvas({
     onDrawingComplete,
     onDrawingClick,
     onDrawingRightClick,
+    showEMA,
+    showVWAP,
   };
+  smcSetTooltipRef.current = setSmcTooltip;
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -864,6 +889,169 @@ export function ChartCanvas({
       drawLine(ctx, visibleData, pMin, pMax, PL, PR, PT, PB, up);
     } else if (ct === "area") {
       drawArea(ctx, visibleData, pMin, pMax, PL, PR, PT, PB, up);
+    }
+
+    // EMA / VWAP overlays
+    if (p.showEMA || p.showVWAP) {
+      // Collect close prices for visible + preceding data to seed EMAs
+      const emaSource =
+        ct === "candlestick" || ct === "bar"
+          ? cls.map((c) => c.close)
+          : cd.map((d) => d.price);
+      const visEnd2 = Math.max(
+        0,
+        emaSource.length - propsRef.current.viewOffset,
+      );
+      const visStart2 = Math.max(0, visEnd2 - visCount);
+
+      function calcEMALine(
+        closes: number[],
+        period: number,
+      ): (number | null)[] {
+        if (closes.length < period) return closes.map(() => null);
+        const k = 2 / (period + 1);
+        let emv = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        const out: number[] = new Array(period).fill(Number.NaN);
+        out[period - 1] = emv;
+        for (let i = period; i < closes.length; i++) {
+          emv = closes[i] * k + emv * (1 - k);
+          out.push(emv);
+        }
+        return out.map((v) => (Number.isNaN(v) ? null : v));
+      }
+
+      if (p.showEMA && (ct === "candlestick" || ct === "bar")) {
+        const ema20line = calcEMALine(emaSource, 20);
+        const ema50line = calcEMALine(emaSource, 50);
+
+        // EMA20
+        ctx.save();
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        ctx.strokeStyle = EMA20_COLOR;
+        ctx.beginPath();
+        let started20 = false;
+        for (let i = visStart2; i < visEnd2; i++) {
+          const val = ema20line[i];
+          if (val === null || val === undefined) {
+            started20 = false;
+            continue;
+          }
+          const relI = i - visStart2;
+          const x = PL + (relI + 0.5) * cw;
+          const y = mapY(val, pMin, pMax, PT, PB);
+          if (!started20) {
+            ctx.moveTo(x, y);
+            started20 = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        // Label
+        const lastEma20 = ema20line[visEnd2 - 1];
+        if (lastEma20 !== null && lastEma20 !== undefined) {
+          ctx.fillStyle = EMA20_COLOR;
+          ctx.font = "8px JetBrains Mono, monospace";
+          ctx.textAlign = "right";
+          ctx.fillText(
+            "EMA20",
+            PR - 4,
+            mapY(lastEma20, pMin, pMax, PT, PB) - 3,
+          );
+        }
+
+        // EMA50
+        ctx.strokeStyle = EMA50_COLOR;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let started50 = false;
+        for (let i = visStart2; i < visEnd2; i++) {
+          const val = ema50line[i];
+          if (val === null || val === undefined) {
+            started50 = false;
+            continue;
+          }
+          const relI = i - visStart2;
+          const x = PL + (relI + 0.5) * cw;
+          const y = mapY(val, pMin, pMax, PT, PB);
+          if (!started50) {
+            ctx.moveTo(x, y);
+            started50 = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        const lastEma50 = ema50line[visEnd2 - 1];
+        if (lastEma50 !== null && lastEma50 !== undefined) {
+          ctx.fillStyle = EMA50_COLOR;
+          ctx.font = "8px JetBrains Mono, monospace";
+          ctx.textAlign = "right";
+          ctx.fillText(
+            "EMA50",
+            PR - 4,
+            mapY(lastEma50, pMin, pMax, PT, PB) + 10,
+          );
+        }
+        ctx.restore();
+      }
+
+      // VWAP
+      if (
+        p.showVWAP &&
+        (ct === "candlestick" || ct === "bar") &&
+        visEnd2 > visStart2
+      ) {
+        ctx.save();
+        let cumPV = 0;
+        let cumV = 0;
+        ctx.strokeStyle = VWAP_COLOR;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
+        ctx.beginPath();
+        let vwapStarted = false;
+        for (let i = visStart2; i < visEnd2; i++) {
+          const c = cls[i];
+          if (!c) continue;
+          const typPrice = (c.high + c.low + c.close) / 3;
+          const vol2 = (c as { volume?: number }).volume ?? 1000;
+          cumPV += typPrice * vol2;
+          cumV += vol2;
+          const vwap = cumV > 0 ? cumPV / cumV : typPrice;
+          const relI = i - visStart2;
+          const x = PL + (relI + 0.5) * cw;
+          const y = mapY(vwap, pMin, pMax, PT, PB);
+          if (!vwapStarted) {
+            ctx.moveTo(x, y);
+            vwapStarted = true;
+          } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Label
+        if (vwapStarted) {
+          const lastC = cls[visEnd2 - 1];
+          if (lastC) {
+            let cv = 0;
+            let cpv = 0;
+            for (let i = visStart2; i < visEnd2; i++) {
+              const c2 = cls[i];
+              if (!c2) continue;
+              const tp = (c2.high + c2.low + c2.close) / 3;
+              const v2 = (c2 as { volume?: number }).volume ?? 1000;
+              cpv += tp * v2;
+              cv += v2;
+            }
+            const finalVwap = cv > 0 ? cpv / cv : lastC.close;
+            ctx.fillStyle = VWAP_COLOR;
+            ctx.font = "8px JetBrains Mono, monospace";
+            ctx.textAlign = "right";
+            ctx.fillText(
+              "VWAP",
+              PR - 4,
+              mapY(finalVwap, pMin, pMax, PT, PB) - 3,
+            );
+          }
+        }
+        ctx.restore();
+      }
     }
 
     // SMC overlays (after chart, before trade lines)
@@ -1029,6 +1217,86 @@ export function ChartCanvas({
       }
     }
 
+    function hitTestSMC(x: number, y: number) {
+      const vp = vpRef.current;
+      const smcData = propsRef.current.smcData;
+      const smcVis = propsRef.current.smcVisibility;
+      if (!vp || !smcData || !smcVis) return null;
+      const {
+        pMin,
+        pMax,
+        plotTop,
+        plotBottom,
+        plotLeft,
+        plotRight,
+        visibleStart,
+        candleWidth: cw,
+      } = vp;
+      const inPlot =
+        x >= plotLeft && x <= plotRight && y >= plotTop && y <= plotBottom;
+      if (!inPlot) return null;
+
+      if (smcVis.orderBlocks) {
+        for (const ob of smcData.orderBlocks) {
+          const y1 =
+            plotBottom -
+            ((ob.high - pMin) / (pMax - pMin)) * (plotBottom - plotTop);
+          const y2 =
+            plotBottom -
+            ((ob.low - pMin) / (pMax - pMin)) * (plotBottom - plotTop);
+          const x1 = plotLeft + (ob.index - visibleStart + 0.5) * cw - cw / 2;
+          const yTop = Math.min(y1, y2);
+          const yBot = Math.max(y1, y2);
+          if (x >= x1 && x <= plotRight && y >= yTop && y <= yBot) {
+            return {
+              type: "Order Block",
+              price: `${ob.low.toFixed(2)}–${ob.high.toFixed(2)}`,
+              direction: ob.type === "bull" ? "Bullish" : "Bearish",
+            };
+          }
+        }
+      }
+      if (smcVis.fvg) {
+        for (const fvg of smcData.fvgZones) {
+          const y1 =
+            plotBottom -
+            ((fvg.high - pMin) / (pMax - pMin)) * (plotBottom - plotTop);
+          const y2 =
+            plotBottom -
+            ((fvg.low - pMin) / (pMax - pMin)) * (plotBottom - plotTop);
+          const yTop = Math.min(y1, y2);
+          const yBot = Math.max(y1, y2);
+          if (x >= plotLeft && x <= plotRight && y >= yTop && y <= yBot) {
+            return {
+              type: fvg.filled ? "FVG (Filled)" : "Fair Value Gap",
+              price: `${fvg.low.toFixed(2)}–${fvg.high.toFixed(2)}`,
+              direction: fvg.type === "bull" ? "Bullish" : "Bearish",
+            };
+          }
+        }
+      }
+      if (smcVis.liquidityZones) {
+        for (const lz of smcData.liquidityZones) {
+          const ph = (lz as any).priceHigh ?? (lz as any).high ?? 0;
+          const pl = (lz as any).priceLow ?? (lz as any).low ?? 0;
+          const y1 =
+            plotBottom - ((ph - pMin) / (pMax - pMin)) * (plotBottom - plotTop);
+          const y2 =
+            plotBottom - ((pl - pMin) / (pMax - pMin)) * (plotBottom - plotTop);
+          const yTop = Math.min(y1, y2) - 4;
+          const yBot = Math.max(y1, y2) + 4;
+          if (x >= plotLeft && x <= plotRight && y >= yTop && y <= yBot) {
+            return {
+              type: "Liquidity Zone",
+              price: ph.toFixed(2),
+              direction: lz.type === "sell" ? "Sell-Side" : "Buy-Side",
+            };
+          }
+        }
+      }
+      return null;
+    }
+
     function handleMouseMove(e: MouseEvent) {
       const { x, y } = getCanvasPoint(e);
       if (dragRef.current.isDragging && !dragRef.current.isDrawing) {
@@ -1047,6 +1315,22 @@ export function ChartCanvas({
           canvas!.style.cursor = hit ? "pointer" : "default";
         } else if (propsRef.current.activeTool !== "cursor") {
           canvas!.style.cursor = "crosshair";
+        }
+        // SMC hover tooltip
+        const rect2 = canvas!.getBoundingClientRect();
+        const smcHit = hitTestSMC(
+          e.clientX - rect2.left,
+          e.clientY - rect2.top,
+        );
+        if (smcHit) {
+          smcSetTooltipRef.current({
+            visible: true,
+            x: e.clientX - rect2.left + 12,
+            y: e.clientY - rect2.top - 10,
+            ...smcHit,
+          });
+        } else {
+          smcSetTooltipRef.current(null);
         }
       }
     }
@@ -1097,12 +1381,16 @@ export function ChartCanvas({
       }
     }
 
+    function handleMouseLeave() {
+      smcSetTooltipRef.current(null);
+    }
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     canvas.addEventListener("mousedown", handleMouseDown);
     canvas.addEventListener("mousemove", handleMouseMove);
     canvas.addEventListener("mouseup", handleMouseUp);
     canvas.addEventListener("click", handleClick);
     canvas.addEventListener("contextmenu", handleContextMenu);
+    canvas.addEventListener("mouseleave", handleMouseLeave);
 
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
@@ -1111,6 +1399,7 @@ export function ChartCanvas({
       canvas.removeEventListener("mouseup", handleMouseUp);
       canvas.removeEventListener("click", handleClick);
       canvas.removeEventListener("contextmenu", handleContextMenu);
+      canvas.removeEventListener("mouseleave", handleMouseLeave);
     };
   }, []);
 
@@ -1140,6 +1429,8 @@ export function ChartCanvas({
     drawingInProgress,
     smcData,
     smcVisibility,
+    showEMA,
+    showVWAP,
     draw,
   ]);
 
@@ -1156,6 +1447,33 @@ export function ChartCanvas({
           cursor: activeTool === "cursor" ? "default" : "crosshair",
         }}
       />
+      {smcTooltip && (
+        <div
+          style={{
+            position: "absolute",
+            left: smcTooltip.x,
+            top: smcTooltip.y,
+            pointerEvents: "none",
+            zIndex: 20,
+          }}
+          className="bg-card/95 border border-border rounded shadow-lg px-2 py-1.5 text-xs backdrop-blur-sm"
+        >
+          <div className="font-semibold text-foreground">{smcTooltip.type}</div>
+          <div className="text-muted-foreground font-mono">
+            {smcTooltip.price}
+          </div>
+          <div
+            className={
+              smcTooltip.direction.includes("Bull") ||
+              smcTooltip.direction.includes("Buy")
+                ? "text-buy"
+                : "text-sell"
+            }
+          >
+            {smcTooltip.direction}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
