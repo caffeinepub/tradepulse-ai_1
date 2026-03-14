@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartCanvas, type ChartType } from "../components/ChartCanvas";
 import { ChartDrawingToolbar } from "../components/ChartDrawingToolbar";
 import { MarketAnalysisPanel } from "../components/MarketAnalysisPanel";
+import { SMCOverlayControls } from "../components/SMCOverlayControls";
 import { SignalsPanel } from "../components/SignalsPanel";
 import { TradeChartOverlay } from "../components/TradeChartOverlay";
 import { TradePopup } from "../components/TradePopup";
@@ -28,8 +29,11 @@ import { useMarketAnalysis } from "../hooks/useMarketAnalysis";
 import { useMultiTimeframe } from "../hooks/useMultiTimeframe";
 import { useNewsSentiment } from "../hooks/useNewsSentiment";
 import { useUserProfile } from "../hooks/useQueries";
+import { useSMCEngine } from "../hooks/useSMCEngine";
+import { useStrategyOptimizer } from "../hooks/useStrategyOptimizer";
 import { useTradeHistory } from "../hooks/useTradeHistory";
 import type { Drawing, DrawingPoint } from "../types/drawing";
+import type { SMCVisibility } from "../types/smc";
 import type { TradeRecord } from "../types/trade";
 import {
   type CandleData,
@@ -131,13 +135,23 @@ export function DashboardPage() {
     y: number;
   } | null>(null);
 
+  // SMC overlay visibility
+  const [smcVisibility, setSmcVisibility] = useState<SMCVisibility>({
+    liquidityZones: true,
+    orderBlocks: true,
+    bosChoch: true,
+    fvg: true,
+  });
+
+  const handleSMCToggle = useCallback((key: keyof SMCVisibility) => {
+    setSmcVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
-  // Viewport (zoom/pan)
   const { candleWidth, viewOffset, handleWheel, handlePanDelta } =
     useChartViewport();
 
-  // Drawing tools
   const {
     drawings,
     activeTool,
@@ -186,7 +200,6 @@ export function DashboardPage() {
           return { ...p, currentPrice: current, pnl };
         }),
       );
-      // Update live candle for selected symbol
       const livePrice = newPrices[selectedSymbol]?.price;
       if (livePrice) {
         const config = SYMBOLS.find((s) => s.symbol === selectedSymbol);
@@ -227,7 +240,6 @@ export function DashboardPage() {
     chartData.length > 1 &&
     chartData[chartData.length - 1].price >= chartData[0].price;
 
-  // Keyboard shortcuts for drawing tools
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -244,24 +256,45 @@ export function DashboardPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedDrawingId, deleteDrawing, setActiveTool, setDrawingInProgress]);
 
-  // Market analysis engine
   const analysis = useMarketAnalysis(
     selectedSymbol,
     selectedPrice?.price ?? 0,
     chartData,
   );
 
-  // Multi-timeframe analysis engine
   const mtf = useMultiTimeframe(
     selectedSymbol,
     selectedPrice?.price ?? 0,
     chartData,
   );
+
   const {
     headlines: newsHeadlines,
     overallSentiment,
     sentimentStrength,
   } = useNewsSentiment(selectedSymbol);
+
+  // Derive MTF bias for SMC engine
+  const mtfBias: "bullish" | "bearish" | "neutral" = useMemo(() => {
+    if (!mtf) return "neutral";
+    if (mtf.higherTFBias === "Bullish") return "bullish";
+    if (mtf.higherTFBias === "Bearish") return "bearish";
+    return "neutral";
+  }, [mtf]);
+
+  // SMC Engine
+  const { smcData, smcContext } = useSMCEngine(
+    candleData,
+    timeframe,
+    mtfBias,
+    selectedPrice?.price ?? 0,
+  );
+
+  // Strategy optimizer weights ref - breaks circular dependency
+  // optimizer runs with 1-render lag which is fine (only updates every 10 trades)
+  const optimizerWeightsRef = useRef<
+    import("../types/smc").FactorWeights | undefined
+  >(undefined);
 
   const { currentSignal, history: signalHistory } = useAISignals(
     selectedSymbol,
@@ -271,16 +304,33 @@ export function DashboardPage() {
     mtf,
     overallSentiment,
     sentimentStrength,
+    smcContext,
+    optimizerWeightsRef.current,
   );
 
-  // Trade history
   const {
+    trades,
     chartRenderTrades,
     openTrade,
     closeTrade,
     dailyPnl,
     dailyLossLimitHit,
   } = useTradeHistory(signalHistory, selectedSymbol, chartData);
+
+  // Strategy Optimizer (needs closed trades)
+  const closedTrades = useMemo(
+    () => trades.filter((t) => t.status === "closed"),
+    [trades],
+  );
+
+  const {
+    weights: optimizerWeights,
+    optimizationSummary,
+    dismissSummary,
+  } = useStrategyOptimizer(selectedSymbol, closedTrades);
+
+  // Keep ref in sync so next render passes updated weights to useAISignals
+  optimizerWeightsRef.current = optimizerWeights;
 
   const handlePlaceOrder = useCallback(() => {
     if (dailyLossLimitHit) return;
@@ -314,7 +364,6 @@ export function DashboardPage() {
     return date.toTimeString().slice(0, 8);
   }
 
-  // Price range for chart overlay (must match what ChartCanvas displays)
   const { priceMin, priceMax } = useMemo(() => {
     if (chartType === "candlestick" || chartType === "bar") {
       if (candleData.length === 0) return { priceMin: 0, priceMax: 1 };
@@ -331,10 +380,8 @@ export function DashboardPage() {
     return { priceMin: lo - pad, priceMax: hi + pad };
   }, [chartType, candleData, chartData]);
 
-  // Open trades for reference lines
   const openTrades = chartRenderTrades.filter((t) => t.status === "open");
 
-  // Drawing state machine
   const handleDrawingStart = (point: DrawingPoint) => {
     if (activeTool === "hline") {
       addDrawing({
@@ -411,7 +458,9 @@ export function DashboardPage() {
         <div className="flex items-center gap-3 text-xs">
           <span className="text-muted-foreground">P&amp;L</span>
           <span
-            className={`font-mono-num font-semibold ${totalPnL >= 0 ? "text-buy" : "text-sell"}`}
+            className={`font-mono-num font-semibold ${
+              totalPnL >= 0 ? "text-buy" : "text-sell"
+            }`}
           >
             {totalPnL >= 0 ? "+" : ""}
             {formatCurrency(totalPnL)}
@@ -420,7 +469,9 @@ export function DashboardPage() {
         <div className="flex items-center gap-3 text-xs">
           <span className="text-muted-foreground">Daily P&amp;L</span>
           <span
-            className={`font-mono-num font-semibold ${dailyPnl >= 0 ? "text-buy" : "text-sell"}`}
+            className={`font-mono-num font-semibold ${
+              dailyPnl >= 0 ? "text-buy" : "text-sell"
+            }`}
           >
             {dailyPnl >= 0 ? "+" : ""}
             {formatCurrency(dailyPnl)}
@@ -500,7 +551,11 @@ export function DashboardPage() {
                           </span>
                           <div className="text-right shrink-0">
                             <div
-                              className={`font-mono-num text-[10px] ${price?.changePercent >= 0 ? "text-buy" : "text-sell"}`}
+                              className={`font-mono-num text-[10px] ${
+                                price?.changePercent >= 0
+                                  ? "text-buy"
+                                  : "text-sell"
+                              }`}
                             >
                               {price?.changePercent >= 0 ? "+" : ""}
                               {price?.changePercent.toFixed(2)}%
@@ -538,7 +593,11 @@ export function DashboardPage() {
                     "\u2014"}
                 </span>
                 <span
-                  className={`font-mono-num text-sm ${(selectedPrice?.changePercent ?? 0) >= 0 ? "text-buy" : "text-sell"}`}
+                  className={`font-mono-num text-sm ${
+                    (selectedPrice?.changePercent ?? 0) >= 0
+                      ? "text-buy"
+                      : "text-sell"
+                  }`}
                 >
                   {(selectedPrice?.changePercent ?? 0) >= 0 ? "+" : ""}
                   {selectedPrice?.changePercent.toFixed(2) ?? "0.00"}%
@@ -587,7 +646,6 @@ export function DashboardPage() {
 
             {/* Timeframe tabs + Chart type switcher */}
             <div className="ml-auto flex items-center gap-2">
-              {/* Chart type switcher */}
               <div
                 className="flex items-center gap-px p-0.5 rounded"
                 style={{ background: "oklch(0.16 0.012 240)" }}
@@ -626,9 +684,17 @@ export function DashboardPage() {
             </div>
           </div>
 
+          {/* SMC Overlay Controls */}
+          <SMCOverlayControls
+            visibility={smcVisibility}
+            onToggle={handleSMCToggle}
+          />
+
           {/* Chart */}
           <div
-            className={`flex-1 min-h-0 flex transition-all ${candleFlash ? "candle-flash" : ""}`}
+            className={`flex-1 min-h-0 flex transition-all ${
+              candleFlash ? "candle-flash" : ""
+            }`}
           >
             {/* Drawing toolbar */}
             <ChartDrawingToolbar
@@ -653,6 +719,8 @@ export function DashboardPage() {
                 activeTool={activeTool}
                 selectedDrawingId={selectedDrawingId}
                 drawingInProgress={drawingInProgress}
+                smcData={smcData}
+                smcVisibility={smcVisibility}
                 onWheel={handleWheel}
                 onPanDelta={handlePanDelta}
                 onDrawingStart={handleDrawingStart}
@@ -679,7 +747,6 @@ export function DashboardPage() {
 
         {/* Right panel: Signals + Order + Positions */}
         <aside className="hidden lg:flex flex-col w-80 shrink-0 border-l border-border overflow-hidden">
-          {/* Signals panel */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <SignalsPanel
               currentSignal={currentSignal}
@@ -690,7 +757,6 @@ export function DashboardPage() {
 
           <Separator />
 
-          {/* Order entry + Open positions */}
           <div className="h-72 flex flex-col overflow-hidden shrink-0">
             <ScrollArea className="flex-1">
               {/* Order entry */}
@@ -791,7 +857,9 @@ export function DashboardPage() {
                     )}
                     {dailyLossLimitHit
                       ? "Trading Paused"
-                      : `${order.side.toUpperCase()} ${selectedConfig.symbol.split("/")[0]}`}
+                      : `${order.side.toUpperCase()} ${
+                          selectedConfig.symbol.split("/")[0]
+                        }`}
                   </Button>
                 </div>
               </div>
@@ -863,7 +931,9 @@ export function DashboardPage() {
                             </span>
                           </span>
                           <span
-                            className={`text-right font-mono-num font-semibold ${pos.pnl >= 0 ? "text-buy" : "text-sell"}`}
+                            className={`text-right font-mono-num font-semibold ${
+                              pos.pnl >= 0 ? "text-buy" : "text-sell"
+                            }`}
                           >
                             {pos.pnl >= 0 ? "+" : ""}
                             {formatCurrency(pos.pnl)}
@@ -891,9 +961,8 @@ export function DashboardPage() {
         </aside>
       </div>
 
-      {/* Bottom row: Market Analysis + Signal History mini-table */}
+      {/* Bottom row: Market Analysis + Signal History */}
       <div className="border-t border-border shrink-0 flex flex-col md:flex-row h-auto md:h-72 overflow-hidden">
-        {/* Market Analysis Panel */}
         <div className="flex-1 min-w-0 border-b md:border-b-0 md:border-r border-border overflow-hidden">
           <MarketAnalysisPanel
             analysis={analysis}
@@ -902,6 +971,8 @@ export function DashboardPage() {
             headlines={newsHeadlines}
             overallSentiment={overallSentiment}
             sentimentStrength={sentimentStrength}
+            optimizationSummary={optimizationSummary}
+            dismissSummary={dismissSummary}
           />
         </div>
 

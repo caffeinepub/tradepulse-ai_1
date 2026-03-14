@@ -5,6 +5,7 @@ import {
   type DrawingTool,
   FIB_LEVELS,
 } from "../types/drawing";
+import type { SMCData, SMCVisibility } from "../types/smc";
 import type { TradeRecord } from "../types/trade";
 import type { CandleData, SymbolConfig } from "../utils/priceSimulator";
 
@@ -19,12 +20,29 @@ const PLOT_LEFT = 72;
 const PLOT_TOP = 10;
 
 // Drawing colors (literal for canvas)
-const TRENDLINE_COLOR = "#3b82f6"; // blue
-const HLINE_COLOR = "#f59e0b"; // amber
-const RECT_COLOR = "rgba(34,197,94,0.15)"; // green fill
+const TRENDLINE_COLOR = "#3b82f6";
+const HLINE_COLOR = "#f59e0b";
+const RECT_COLOR = "rgba(34,197,94,0.15)";
 const RECT_STROKE = "#22c55e";
 const FIB_COLOR = "#f59e0b";
 const SELECTED_COLOR = "#facc15";
+
+// SMC colors
+const SMC_BUY_FILL = "rgba(34,197,94,0.08)";
+const SMC_BUY_BORDER = "rgba(34,197,94,0.35)";
+const SMC_BUY_TEXT = "rgba(34,197,94,0.7)";
+const SMC_SELL_FILL = "rgba(239,68,68,0.08)";
+const SMC_SELL_BORDER = "rgba(239,68,68,0.35)";
+const SMC_SELL_TEXT = "rgba(239,68,68,0.7)";
+const SMC_OB_BULL_FILL = "rgba(34,197,94,0.13)";
+const SMC_OB_BULL_ACCENT = "rgba(34,197,94,0.55)";
+const SMC_OB_BEAR_FILL = "rgba(239,68,68,0.13)";
+const SMC_OB_BEAR_ACCENT = "rgba(239,68,68,0.55)";
+const SMC_FVG_BULL = "rgba(34,197,94,0.18)";
+const SMC_FVG_BEAR = "rgba(239,68,68,0.18)";
+const SMC_BOS_UP = "rgba(34,197,94,0.9)";
+const SMC_BOS_DN = "rgba(239,68,68,0.9)";
+const SMC_CHOCH = "rgba(251,146,60,0.9)";
 
 interface ViewportInfo {
   pMin: number;
@@ -46,14 +64,14 @@ interface ChartCanvasProps {
   openTrades: TradeRecord[];
   selectedConfig: SymbolConfig;
   isUp: boolean;
-  // Viewport
   candleWidth: number;
   viewOffset: number;
-  // Drawing
   drawings: Drawing[];
   activeTool: DrawingTool;
   selectedDrawingId: string | null;
   drawingInProgress: Drawing | null;
+  smcData?: SMCData;
+  smcVisibility?: SMCVisibility;
   onWheel: (e: WheelEvent, mouseXFraction: number) => void;
   onPanDelta: (deltaX: number) => void;
   onDrawingStart: (point: DrawingPoint) => void;
@@ -237,6 +255,158 @@ function drawArea(
   ctx.stroke();
 }
 
+function drawSMCOverlays(
+  ctx: CanvasRenderingContext2D,
+  smcData: SMCData,
+  smcVisibility: SMCVisibility,
+  pMin: number,
+  pMax: number,
+  PL: number,
+  PR: number,
+  PT: number,
+  PB: number,
+  visibleStart: number,
+  visCount: number,
+  cw: number,
+  isCandleChart: boolean,
+) {
+  ctx.save();
+
+  // ── Liquidity Zones ────────────────────────────────────────────────
+  if (smcVisibility.liquidityZones) {
+    for (const zone of smcData.liquidityZones) {
+      const y1 = mapY(zone.priceLow, pMin, pMax, PT, PB);
+      const y2 = mapY(zone.priceHigh, pMin, pMax, PT, PB);
+      const yTop = Math.min(y1, y2);
+      const yBot = Math.max(y1, y2);
+      const h = Math.max(2, yBot - yTop);
+
+      if (zone.type === "sell") {
+        ctx.fillStyle = SMC_SELL_FILL;
+        ctx.fillRect(PL, yTop, PR - PL, h);
+        ctx.strokeStyle = SMC_SELL_BORDER;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(PL, yTop);
+        ctx.lineTo(PR, yTop);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = SMC_SELL_TEXT;
+        ctx.font = "8px JetBrains Mono, monospace";
+        ctx.textAlign = "right";
+        ctx.fillText("Sell Liq", PR - 4, yTop - 2);
+      } else {
+        ctx.fillStyle = SMC_BUY_FILL;
+        ctx.fillRect(PL, yTop, PR - PL, h);
+        ctx.strokeStyle = SMC_BUY_BORDER;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(PL, yBot);
+        ctx.lineTo(PR, yBot);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = SMC_BUY_TEXT;
+        ctx.font = "8px JetBrains Mono, monospace";
+        ctx.textAlign = "right";
+        ctx.fillText("Buy Liq", PR - 4, yBot + 9);
+      }
+    }
+  }
+
+  // ── Fair Value Gaps ────────────────────────────────────────────────
+  if (smcVisibility.fvg) {
+    for (const fvg of smcData.fvgZones) {
+      const y1 = mapY(fvg.high, pMin, pMax, PT, PB);
+      const y2 = mapY(fvg.low, pMin, pMax, PT, PB);
+      const yTop = Math.min(y1, y2);
+      const h = Math.max(2, Math.abs(y2 - y1));
+
+      ctx.globalAlpha = fvg.filled ? 0.3 : 1;
+      ctx.fillStyle = fvg.type === "bull" ? SMC_FVG_BULL : SMC_FVG_BEAR;
+      ctx.fillRect(PL, yTop, PR - PL, h);
+
+      if (fvg.filled) {
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle =
+          fvg.type === "bull" ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.35)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(PL, yTop, PR - PL, h);
+        ctx.setLineDash([]);
+        ctx.fillStyle =
+          fvg.type === "bull" ? "rgba(34,197,94,0.55)" : "rgba(239,68,68,0.55)";
+        ctx.font = "8px JetBrains Mono, monospace";
+        ctx.textAlign = "right";
+        ctx.fillText("Filled", PR - 4, yTop + 9);
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ── Order Blocks (only for candle-based charts) ────────────────────
+  if (smcVisibility.orderBlocks && isCandleChart) {
+    for (const ob of smcData.orderBlocks) {
+      const relIdx = ob.index - visibleStart;
+      if (relIdx < 0 || relIdx >= visCount) continue;
+
+      const x1 = absIndexToX(ob.index, visibleStart, PL, cw) - cw / 2;
+      const rectW = PR - x1;
+      const y1 = mapY(ob.high, pMin, pMax, PT, PB);
+      const y2 = mapY(ob.low, pMin, pMax, PT, PB);
+      const yTop = Math.min(y1, y2);
+      const h = Math.max(2, Math.abs(y2 - y1));
+
+      ctx.globalAlpha = ob.mitigated ? 0.4 : 0.9;
+
+      if (ob.type === "bull") {
+        ctx.fillStyle = SMC_OB_BULL_FILL;
+        ctx.fillRect(x1, yTop, rectW, h);
+        ctx.fillStyle = SMC_OB_BULL_ACCENT;
+        ctx.fillRect(x1, yTop, 2, h);
+        ctx.fillStyle = SMC_OB_BULL_ACCENT;
+      } else {
+        ctx.fillStyle = SMC_OB_BEAR_FILL;
+        ctx.fillRect(x1, yTop, rectW, h);
+        ctx.fillStyle = SMC_OB_BEAR_ACCENT;
+        ctx.fillRect(x1, yTop, 2, h);
+        ctx.fillStyle = SMC_OB_BEAR_ACCENT;
+      }
+
+      ctx.font = "8px JetBrains Mono, monospace";
+      ctx.textAlign = "left";
+      ctx.fillText("OB", x1 + 4, yTop + 9);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ── BOS / CHOCH Markers (only for candle-based charts) ────────────
+  if (smcVisibility.bosChoch && isCandleChart) {
+    for (const event of smcData.bosChochEvents) {
+      const relIdx = event.index - visibleStart;
+      if (relIdx < 0 || relIdx >= visCount) continue;
+
+      const x = absIndexToX(event.index, visibleStart, PL, cw);
+      const y = mapY(event.price, pMin, pMax, PT, PB);
+
+      ctx.font = "bold 8px JetBrains Mono, monospace";
+      ctx.textAlign = "center";
+
+      if (event.type === "BOS") {
+        ctx.fillStyle = event.direction === "up" ? SMC_BOS_UP : SMC_BOS_DN;
+      } else {
+        ctx.fillStyle = SMC_CHOCH;
+      }
+
+      const label = `${event.type} ${event.direction === "up" ? "\u2191" : "\u2193"}`;
+      const yOff = event.direction === "up" ? y - 6 : y + 14;
+      ctx.fillText(label, x, yOff);
+    }
+  }
+
+  ctx.restore();
+}
+
 function renderDrawing(
   ctx: CanvasRenderingContext2D,
   drawing: Drawing,
@@ -295,7 +465,6 @@ function renderDrawing(
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
     ctx.stroke();
-    // Endpoint dots
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x1, y1, 3, 0, Math.PI * 2);
@@ -348,7 +517,6 @@ function renderDrawing(
     const priceRange = highPrice - lowPrice;
     const color = isSelected ? SELECTED_COLOR : FIB_COLOR;
 
-    // Main line
     const y1 = mapY(drawing.start.price, pMin, pMax, plotTop, plotBottom);
     const y2 = mapY(drawing.end.price, pMin, pMax, plotTop, plotBottom);
     ctx.strokeStyle = `${color}60`;
@@ -360,10 +528,8 @@ function renderDrawing(
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Level lines
     const minX = Math.min(x1, x2);
     for (const level of FIB_LEVELS) {
-      // From high going down to low
       const levelPrice = highPrice - level * priceRange;
       const ly = mapY(levelPrice, pMin, pMax, plotTop, plotBottom);
       const alpha2 = level === 0 || level === 1 ? 0.8 : 0.5;
@@ -434,7 +600,6 @@ function hitTestDrawing(
       candleWidth,
     );
     const y2 = mapY(drawing.end.price, pMin, pMax, plotTop, plotBottom);
-    // Distance from point to line segment
     const dx = x2 - x1;
     const dy = y2 - y1;
     const lenSq = dx * dx + dy * dy;
@@ -465,7 +630,6 @@ function hitTestDrawing(
     const ry = Math.min(y1, y2);
     const rw = Math.abs(x2 - x1);
     const rh = Math.abs(y2 - y1);
-    // Check near border
     const nearLeft =
       Math.abs(mouseX - rx) < THRESHOLD &&
       mouseY >= ry - THRESHOLD &&
@@ -519,6 +683,8 @@ export function ChartCanvas({
   activeTool,
   selectedDrawingId,
   drawingInProgress,
+  smcData,
+  smcVisibility,
   onWheel,
   onPanDelta,
   onDrawingStart,
@@ -529,11 +695,7 @@ export function ChartCanvas({
 }: ChartCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Viewport info ref for event handlers
   const vpRef = useRef<ViewportInfo | null>(null);
-
-  // Drag state
   const dragRef = useRef({
     isDragging: false,
     startX: 0,
@@ -554,6 +716,8 @@ export function ChartCanvas({
     activeTool,
     selectedDrawingId,
     drawingInProgress,
+    smcData,
+    smcVisibility,
     onWheel,
     onPanDelta,
     onDrawingStart,
@@ -575,6 +739,8 @@ export function ChartCanvas({
     activeTool,
     selectedDrawingId,
     drawingInProgress,
+    smcData,
+    smcVisibility,
     onWheel,
     onPanDelta,
     onDrawingStart,
@@ -620,7 +786,6 @@ export function ChartCanvas({
     const plotWidth = PR - PL;
     const prec = sc.precision;
 
-    // Viewport calculation
     const cw = p.candleWidth;
     const visCount = Math.max(1, Math.floor(plotWidth / cw));
 
@@ -654,7 +819,6 @@ export function ChartCanvas({
     pMin -= pad;
     pMax += pad;
 
-    // Store viewport for event handlers
     const vp: ViewportInfo = {
       pMin,
       pMax,
@@ -702,6 +866,26 @@ export function ChartCanvas({
       drawArea(ctx, visibleData, pMin, pMax, PL, PR, PT, PB, up);
     }
 
+    // SMC overlays (after chart, before trade lines)
+    if (p.smcData && p.smcVisibility) {
+      const isCandleChart = ct === "candlestick" || ct === "bar";
+      drawSMCOverlays(
+        ctx,
+        p.smcData,
+        p.smcVisibility,
+        pMin,
+        pMax,
+        PL,
+        PR,
+        PT,
+        PB,
+        visibleStart,
+        visCount,
+        cw,
+        isCandleChart,
+      );
+    }
+
     // X-axis time labels
     const timeData =
       ct === "candlestick" || ct === "bar" ? visibleCandles : visibleData;
@@ -716,7 +900,7 @@ export function ChartCanvas({
       }
     }
 
-    // Trade lines (from openTrades)
+    // Trade lines (open trades)
     for (const trade of ot) {
       const tradeColor = trade.side === "buy" ? CANDLE_UP : CANDLE_DOWN;
       ctx.font = "9px JetBrains Mono, monospace";
@@ -779,7 +963,7 @@ export function ChartCanvas({
       ctx.fillText(`TP3: ${trade.tp3.toFixed(prec)}`, PR - 2, tp3y - 3);
     }
 
-    // Drawings
+    // User drawings
     for (const d of p.drawings) {
       renderDrawing(ctx, d, vp, d.id === p.selectedDrawingId, false);
     }
@@ -788,7 +972,6 @@ export function ChartCanvas({
     }
   }, []);
 
-  // Event handlers
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -856,7 +1039,6 @@ export function ChartCanvas({
         const point = mouseToDrawingPoint(x, y);
         if (point) propsRef.current.onDrawingUpdate(point);
       } else {
-        // Update cursor
         const vp = vpRef.current;
         if (vp && propsRef.current.activeTool === "cursor") {
           const hit = propsRef.current.drawings.some((d) =>
@@ -887,7 +1069,6 @@ export function ChartCanvas({
       const { x, y } = getCanvasPoint(e);
       const vp = vpRef.current;
       if (!vp) return;
-      // Hit-test drawings
       const drawings = propsRef.current.drawings;
       for (let i = drawings.length - 1; i >= 0; i--) {
         if (hitTestDrawing(drawings[i], x, y, vp)) {
@@ -895,7 +1076,6 @@ export function ChartCanvas({
           return;
         }
       }
-      // No hit - deselect
       propsRef.current.onDrawingClick("");
     }
 
@@ -958,6 +1138,8 @@ export function ChartCanvas({
     activeTool,
     selectedDrawingId,
     drawingInProgress,
+    smcData,
+    smcVisibility,
     draw,
   ]);
 

@@ -1,32 +1,45 @@
 # TradePulse AI
 
 ## Current State
-The chart is a canvas-based renderer (`ChartCanvas.tsx`) that supports Candlestick, Line, Area, and Bar chart types. It renders trade overlays (entry/SL/TP lines) for open trades and uses a separate SVG overlay (`TradeChartOverlay.tsx`) for trade markers. The chart is static — no pan, no zoom, and no drawing tools. `DashboardPage.tsx` hosts the chart with a fixed plot area.
+
+Full-stack trading platform with:
+- Multi-type chart (candlestick/line/area/bar) with zoom/pan and drawing tools
+- AI Signal Engine generating BUY/SELL/HOLD with confidence scoring
+- Market Analysis Panel: trend, momentum, structure events, MTF analysis, news/sentiment
+- Trade visualization on chart canvas (entry/SL/TP lines, markers, popups)
+- Demo trading with 200 USDT daily loss limit
+- Analytics page with full performance metrics
+- ChartCanvas.tsx handles all canvas rendering
+- MarketAnalysisPanel.tsx for analysis sidebar
+- SignalsPanel.tsx for signal display
+- ChartDrawingToolbar.tsx for drawing tools
+- Hooks: useMarketAnalysis, useMultiTimeframe, useAISignals, useNewsSentiment, useTradeHistory
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Chart viewport state**: `viewOffset` (horizontal pan index) and `candleWidth` (pixels per candle/zoom level) managed in `DashboardPage` or a new `useChartViewport` hook
-- **Mouse/touch interactions on canvas**: scroll to zoom anchored to cursor position; click-drag to pan; all interactions work across all 4 chart types
-- **Drawing tools engine** (`useChartDrawings` hook): manages drawing state per timeframe, handles creation, selection, movement, deletion
-- **Drawing toolbar component** (`ChartDrawingToolbar.tsx`): vertical toolbar on the left side of the chart with 4 tool buttons: Trendline, Horizontal Line, Rectangle, Fibonacci Retracement; cursor icon + pointer tool to return to normal
-- **Drawing renderer**: all drawings rendered on the chart canvas as part of the draw loop — trendlines, horizontal lines, rectangles, fibonacci levels (0%, 23.6%, 38.2%, 50%, 61.8%, 100%) with labeled price levels
-- **Drawing interaction layer**: canvas mouse events for click-to-start, drag-to-place, click-to-select, drag-to-move drawings; right-click context menu with "Delete" option; Delete/Backspace keyboard shortcut for selected drawing
-- **Context menu component** for right-click delete on drawings
+- `useSMCEngine` hook: detects liquidity zones, order blocks, BOS/CHOCH, FVGs per timeframe-adaptive lookback (1m/5m=30 candles, 15m/1h=75, 4h/1D=150). BOS/CHOCH classification uses prior swing structure + MTF bias. FVGs track filled state (price traded through zone).
+- `SMCOverlayControls` component: compact toggle panel with 4 toggles (Liquidity Zones, Order Blocks, BOS/CHOCH, Fair Value Gaps). Sits above or alongside the drawing toolbar.
+- SMC rendering in ChartCanvas: draw liquidity zones as semi-transparent shaded bands, order blocks as colored rectangles (green/red), BOS/CHOCH as labeled text markers at breakout candles, FVGs as highlighted zones (full opacity unfilled, 25% opacity filled with "Filled" label).
+- `useStrategyOptimizer` hook: per-asset learned weight map (trend alignment, indicator confluence, volume confirmation, structure signals, liquidity zone proximity, order block proximity, sentiment). Triggers after every 10 closed trades per asset. Increases weight for factors >65% win rate, decreases for <40%. Returns current weights + latest optimization summary string.
+- Strategy optimization notification card in SignalsPanel or MarketAnalysisPanel: small card showing the optimization summary (e.g. "Strategy updated for BTC — Order block confluence weight increased (68% win rate)"). Dismissable, auto-clears on next optimization run.
+- Signal confidence adjustments in useAISignals: use SMC detections (+5-8% for order block proximity, +5% for liquidity sweep, +5% for BOS matching HTF bias, penalty for CHOCH against HTF bias) and optimizer weights.
 
 ### Modify
-- `ChartCanvas.tsx`: accept `viewOffset` and `candleWidth` props; render only the visible candle slice based on viewport; add zoom/pan mouse event handlers; render drawings layer on canvas; accept `drawings`, `activeTool`, `onDrawingStart`, `onDrawingUpdate`, `onDrawingComplete`, `onDrawingSelect`, `onDrawingMove` props
-- `DashboardPage.tsx`: add drawing toolbar to the left of the chart; wire viewport state and drawing state; layout updated so chart has drawing toolbar on left
-- `TradeChartOverlay.tsx`: update plot area constants to account for drawing toolbar width on left side
+- ChartCanvas.tsx: add props for SMC data (liquidity zones, order blocks, BOS/CHOCH events, FVGs) and overlay visibility toggles. Render SMC layers beneath trade overlays.
+- DashboardPage.tsx: wire useSMCEngine, useStrategyOptimizer, SMCOverlayControls. Pass SMC data to ChartCanvas.
+- useAISignals: accept SMC context and optimizer weights, apply confidence boosts/penalties.
+- MarketAnalysisPanel or SignalsPanel: display strategy optimizer notification card when available.
 
 ### Remove
-- Nothing removed; all existing overlays preserved
+- Nothing removed.
 
 ## Implementation Plan
-1. Create `src/frontend/src/hooks/useChartViewport.ts` — manages candleWidth (zoom), viewOffset (pan), exposes handlers for wheel zoom and drag pan
-2. Create `src/frontend/src/hooks/useChartDrawings.ts` — manages drawings map keyed by timeframe, active tool, selected drawing, drawing-in-progress; exposes CRUD operations
-3. Create `src/frontend/src/types/drawing.ts` — TypeScript types for Drawing (trendline, hline, rectangle, fibonacci) with start/end coordinates in price/index space
-4. Create `src/frontend/src/components/ChartDrawingToolbar.tsx` — vertical icon toolbar, tool selection state
-5. Rewrite `ChartCanvas.tsx` — add viewport slice logic, pan/zoom mouse handlers, drawing render layer, drawing interaction hit-testing
-6. Update `DashboardPage.tsx` — integrate drawing toolbar, viewport hook, drawings hook; layout chart area as flex row with toolbar + canvas
-7. Update `TradeChartOverlay.tsx` — adjust for new plot area with toolbar offset
+
+1. Create `src/frontend/src/hooks/useSMCEngine.ts` — detects all SMC elements from candle data, timeframe, and MTF bias.
+2. Create `src/frontend/src/hooks/useStrategyOptimizer.ts` — per-asset weight tracking, 10-trade trigger, transparency summary.
+3. Create `src/frontend/src/components/SMCOverlayControls.tsx` — 4 toggles for SMC layer visibility.
+4. Update `ChartCanvas.tsx` — add SMC rendering layer (liquidity zones, order blocks, BOS/CHOCH labels, FVGs).
+5. Update `useAISignals` — consume SMC context and optimizer weights for confidence scoring.
+6. Update `DashboardPage.tsx` — integrate all new hooks and components.
+7. Update `MarketAnalysisPanel.tsx` or `SignalsPanel.tsx` — show optimizer notification card.

@@ -4,8 +4,10 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart2,
+  Bot,
   Layers,
   Newspaper,
+  X,
   Zap,
 } from "lucide-react";
 import type {
@@ -25,6 +27,8 @@ interface MarketAnalysisPanelProps {
   headlines?: NewsItem[];
   overallSentiment?: SentimentLabel;
   sentimentStrength?: number;
+  optimizationSummary?: string | null;
+  dismissSummary?: () => void;
 }
 
 function EventTypeBadge({ type }: { type: StructureEvent["type"] }) {
@@ -97,6 +101,8 @@ export function MarketAnalysisPanel({
   headlines = [],
   overallSentiment = "Neutral",
   sentimentStrength = 50,
+  optimizationSummary,
+  dismissSummary,
 }: MarketAnalysisPanelProps) {
   const trendColor =
     analysis?.trend === "Bullish"
@@ -156,17 +162,50 @@ export function MarketAnalysisPanel({
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="px-3 pb-3 space-y-3">
+          {/* ── Strategy Optimizer Notification ───────────────────────────── */}
+          {optimizationSummary && (
+            <div
+              data-ocid="optimizer.notification_card"
+              className="rounded p-2 flex items-start gap-2"
+              style={{
+                background: "oklch(0.22 0.05 85 / 0.6)",
+                border: "1px solid oklch(0.45 0.12 85 / 0.4)",
+              }}
+            >
+              <Bot
+                className="w-3 h-3 shrink-0 mt-0.5"
+                style={{ color: "oklch(0.72 0.18 85)" }}
+              />
+              <p
+                className="flex-1 text-[9px] leading-tight"
+                style={{ color: "oklch(0.82 0.12 85)" }}
+              >
+                {optimizationSummary}
+              </p>
+              {dismissSummary && (
+                <button
+                  type="button"
+                  data-ocid="optimizer.dismiss_button"
+                  onClick={dismissSummary}
+                  className="shrink-0 transition-opacity hover:opacity-70"
+                  style={{ color: "oklch(0.55 0.08 85)" }}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+
           {!analysis ? (
             <div className="text-center py-6 text-[10px] text-muted-foreground">
               Analyzing market structure...
             </div>
           ) : (
             <>
-              {/* ── Multi-Timeframe Analysis ─────────────────────────────── */}
+              {/* ── Multi-Timeframe Analysis ───────────────────────────────── */}
               {mtf && (
                 <>
                   <div data-ocid="analysis.mtf.panel">
-                    {/* MTF Header with bias */}
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">
                         Multi-TF Analysis
@@ -183,7 +222,6 @@ export function MarketAnalysisPanel({
                       </div>
                     </div>
 
-                    {/* Higher TF block */}
                     <div className="terminal-border rounded p-2 mb-1.5">
                       <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
                         Higher Timeframe
@@ -223,7 +261,6 @@ export function MarketAnalysisPanel({
                       </div>
                     </div>
 
-                    {/* Entry TF block */}
                     <div className="terminal-border rounded p-2 mb-1.5">
                       <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
                         Entry Timeframe
@@ -263,7 +300,6 @@ export function MarketAnalysisPanel({
                       </div>
                     </div>
 
-                    {/* Confluence score */}
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] text-muted-foreground uppercase tracking-wider">
                         Confluence
@@ -304,7 +340,7 @@ export function MarketAnalysisPanel({
                 </>
               )}
 
-              {/* ── Single-TF Trend ─────────────────────────────────────── */}
+              {/* ── Single-TF Trend ────────────────────────────────────────────── */}
               <div>
                 <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1.5">
                   Trend
@@ -472,7 +508,6 @@ export function MarketAnalysisPanel({
                   Market Sentiment
                 </div>
 
-                {/* Sentiment badge + strength */}
                 <div className="flex items-center justify-between mb-1.5">
                   <span
                     data-ocid="analysis.sentiment.badge"
@@ -496,7 +531,6 @@ export function MarketAnalysisPanel({
                   </span>
                 </div>
 
-                {/* Strength bar */}
                 <div
                   data-ocid="analysis.sentiment.bar"
                   className="rounded-full overflow-hidden mb-2"
@@ -516,7 +550,6 @@ export function MarketAnalysisPanel({
                   />
                 </div>
 
-                {/* Headlines list */}
                 {headlines.length === 0 ? (
                   <div className="text-[10px] text-muted-foreground py-2">
                     Fetching market news...
@@ -531,7 +564,9 @@ export function MarketAnalysisPanel({
                       <div
                         key={item.id}
                         data-ocid={`analysis.sentiment.headline.${idx + 1}`}
-                        className={`px-1.5 py-1 rounded text-[9px] ${idx % 2 === 0 ? "bg-secondary/30" : ""}`}
+                        className={`px-1.5 py-1 rounded text-[9px] ${
+                          idx % 2 === 0 ? "bg-secondary/30" : ""
+                        }`}
                       >
                         <div className="flex items-start gap-1.5 mb-0.5">
                           <span
