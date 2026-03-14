@@ -139,6 +139,69 @@ export function updatePrices(): void {
   }
 }
 
+// Binance ticker symbol → internal symbol mapping
+const BINANCE_SYMBOL_MAP: Record<string, string> = {
+  BTCUSDT: "BTC/USD",
+  ETHUSDT: "ETH/USD",
+  SOLUSDT: "SOL/USD",
+};
+
+/**
+ * Fetches live prices from the Binance REST API for BTC, ETH, and SOL.
+ * Updates the SYMBOLS basePrice and seeds the priceStates map with real values.
+ * Falls back silently to hardcoded values on any error.
+ */
+export async function fetchLiveBinancePrices(): Promise<void> {
+  try {
+    const url =
+      "https://api.binance.com/api/v3/ticker/24hr?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%2C%22SOLUSDT%22%5D";
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn("[TradePulse] Binance REST fetch failed:", res.status);
+      return;
+    }
+    const tickers: Array<{
+      symbol: string;
+      lastPrice: string;
+      highPrice: string;
+      lowPrice: string;
+      priceChange: string;
+      priceChangePercent: string;
+    }> = await res.json();
+
+    for (const ticker of tickers) {
+      const internalSymbol = BINANCE_SYMBOL_MAP[ticker.symbol];
+      if (!internalSymbol) continue;
+
+      const lastPrice = Number.parseFloat(ticker.lastPrice);
+      const highPrice = Number.parseFloat(ticker.highPrice);
+      const lowPrice = Number.parseFloat(ticker.lowPrice);
+      const priceChange = Number.parseFloat(ticker.priceChange);
+      const priceChangePercent = Number.parseFloat(ticker.priceChangePercent);
+
+      // Update basePrice in the SYMBOLS array so future simulated drift is anchored to the real price
+      const configEntry = SYMBOLS.find((s) => s.symbol === internalSymbol);
+      if (configEntry) {
+        configEntry.basePrice = lastPrice;
+      }
+
+      // Seed the live price state with real Binance values
+      priceStates.set(internalSymbol, {
+        price: lastPrice,
+        change24h: priceChange,
+        changePercent: priceChangePercent,
+        high24h: highPrice,
+        low24h: lowPrice,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[TradePulse] Binance live price fetch error — using hardcoded values.",
+      err,
+    );
+  }
+}
+
 export function generateChartData(
   symbol: string,
   points = 120,

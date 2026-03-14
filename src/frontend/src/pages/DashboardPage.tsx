@@ -32,6 +32,7 @@ import {
   type CandleData,
   SYMBOLS,
   type SymbolConfig,
+  fetchLiveBinancePrices,
   formatCurrency,
   generateCandleHistory,
   generateChartData,
@@ -185,6 +186,24 @@ export function DashboardPage() {
     x: number;
     y: number;
   } | null>(null);
+
+  // --- Live Binance price fetch on mount ---
+  // Fetches real prices from Binance REST API before the simulation starts,
+  // so the chart opens at the true market price instead of a hardcoded value.
+  useEffect(() => {
+    fetchLiveBinancePrices().then(() => {
+      // After fetching, refresh the prices state and regenerate chart data
+      // so the initial render uses the real Binance price.
+      setPrices(
+        Object.fromEntries(
+          SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)]),
+        ),
+      );
+      const p = getCandleParams("1h");
+      setChartData(generateChartData("BTC/USD"));
+      setCandleData(generateCandleHistory("BTC/USD", p.points, p.timeframeMs));
+    });
+  }, []);
 
   // Reload candle data when symbol or timeframe changes
   const handleSymbolOrTimeframeChange = useCallback(
