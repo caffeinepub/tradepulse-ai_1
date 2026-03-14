@@ -11,7 +11,7 @@ export const SYMBOLS: SymbolConfig[] = [
   {
     symbol: "BTC/USD",
     name: "Bitcoin",
-    basePrice: 65000,
+    basePrice: 71055,
     category: "crypto",
     precision: 2,
     volatility: 0.004,
@@ -19,7 +19,7 @@ export const SYMBOLS: SymbolConfig[] = [
   {
     symbol: "ETH/USD",
     name: "Ethereum",
-    basePrice: 3400,
+    basePrice: 3500,
     category: "crypto",
     precision: 2,
     volatility: 0.005,
@@ -27,7 +27,7 @@ export const SYMBOLS: SymbolConfig[] = [
   {
     symbol: "SOL/USD",
     name: "Solana",
-    basePrice: 145,
+    basePrice: 155,
     category: "crypto",
     precision: 3,
     volatility: 0.006,
@@ -51,7 +51,7 @@ export const SYMBOLS: SymbolConfig[] = [
   {
     symbol: "XAU/USD",
     name: "Gold",
-    basePrice: 2340,
+    basePrice: 2380,
     category: "gold",
     precision: 2,
     volatility: 0.002,
