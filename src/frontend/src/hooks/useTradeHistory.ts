@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { tradeStore } from "../store/tradeStore";
 import type { TradeRecord } from "../types/trade";
 import type { AISignal } from "../utils/aiSignalEngine";
 
@@ -99,6 +100,8 @@ export function useTradeHistory(
         status: "open",
       };
       setTrades((prev) => [trade, ...prev].slice(0, 200));
+      // Sync to module-level store for Analytics page
+      tradeStore.addTrade(trade);
       return trade;
     },
     [],
@@ -113,9 +116,7 @@ export function useTradeHistory(
             t.side === "buy"
               ? (exitPrice - t.entryPrice) * 1
               : (t.entryPrice - exitPrice) * 1;
-          // Update daily PnL
-          setDailyPnl((prev) => prev + pnl);
-          return {
+          const closed: TradeRecord = {
             ...t,
             exitPrice,
             exitIndex,
@@ -123,6 +124,11 @@ export function useTradeHistory(
             status: "closed" as const,
             pnl,
           };
+          // Update daily PnL
+          setDailyPnl((d) => d + pnl);
+          // Sync closed trade to store
+          tradeStore.updateTrade(closed);
+          return closed;
         }),
       );
     },

@@ -51,6 +51,8 @@ export function generateSignal(
   chartData: { price: number; time: string }[],
   analysis?: MarketAnalysis | null,
   mtf?: MultiTimeframeAnalysis | null,
+  overallSentiment?: "Bullish" | "Bearish" | "Neutral",
+  sentimentStrength?: number,
 ): AISignal {
   const prices = chartData.map((d) => d.price);
 
@@ -194,6 +196,29 @@ export function generateSignal(
 
     if (confluenceBias === signalType && confluenceScore >= 70) {
       confidence = Math.min(95, confidence + 5);
+    }
+  }
+
+  // ── Apply sentiment nudge ────────────────────────────────────────────────
+  if (overallSentiment && sentimentStrength !== undefined) {
+    if (
+      overallSentiment === "Bullish" &&
+      sentimentStrength > 70 &&
+      signalType === "BUY"
+    ) {
+      confidence = Math.min(
+        95,
+        confidence + Math.round((sentimentStrength - 70) * 0.27),
+      );
+    } else if (
+      overallSentiment === "Bearish" &&
+      sentimentStrength > 70 &&
+      signalType === "SELL"
+    ) {
+      confidence = Math.min(
+        95,
+        confidence + Math.round((sentimentStrength - 70) * 0.27),
+      );
     }
   }
 

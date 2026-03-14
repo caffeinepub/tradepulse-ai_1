@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart2,
+  LineChart,
   LogIn,
   LogOut,
   Menu,
@@ -22,11 +23,23 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const navLinks = [
-    { to: "/" as const, label: "Home", ocid: "nav.home_link" },
+    {
+      to: "/" as const,
+      label: "Home",
+      ocid: "nav.home_link",
+      icon: TrendingUp,
+    },
     {
       to: "/dashboard" as const,
       label: "Dashboard",
       ocid: "nav.dashboard_link",
+      icon: BarChart2,
+    },
+    {
+      to: "/analytics" as const,
+      label: "Analytics",
+      ocid: "nav.analytics_link",
+      icon: LineChart,
     },
     ...(isAuthed
       ? [
@@ -34,6 +47,7 @@ export function Navbar() {
             to: "/profile" as const,
             label: "Profile",
             ocid: "nav.profile_link",
+            icon: User,
           },
         ]
       : []),
@@ -140,26 +154,25 @@ export function Navbar() {
             className="md:hidden border-t border-border bg-background px-4 pb-4 pt-2"
           >
             <div className="flex flex-col gap-1">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.to}
-                  to={link.to}
-                  data-ocid={link.ocid}
-                  onClick={() => setMenuOpen(false)}
-                  className={`px-3 py-2 text-sm rounded transition-colors flex items-center gap-2 ${
-                    pathname === link.to
-                      ? "text-foreground bg-secondary"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {link.to === "/" && <TrendingUp className="w-4 h-4" />}
-                  {link.to === "/dashboard" && (
-                    <BarChart2 className="w-4 h-4" />
-                  )}
-                  {link.to === "/profile" && <User className="w-4 h-4" />}
-                  {link.label}
-                </Link>
-              ))}
+              {navLinks.map((link) => {
+                const Icon = link.icon;
+                return (
+                  <Link
+                    key={link.to}
+                    to={link.to}
+                    data-ocid={link.ocid}
+                    onClick={() => setMenuOpen(false)}
+                    className={`px-3 py-2 text-sm rounded transition-colors flex items-center gap-2 ${
+                      pathname === link.to
+                        ? "text-foreground bg-secondary"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {link.label}
+                  </Link>
+                );
+              })}
               <div className="border-t border-border mt-2 pt-2 flex flex-col gap-1">
                 {isAuthed ? (
                   <button

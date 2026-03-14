@@ -15,16 +15,21 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartCanvas, type ChartType } from "../components/ChartCanvas";
+import { ChartDrawingToolbar } from "../components/ChartDrawingToolbar";
 import { MarketAnalysisPanel } from "../components/MarketAnalysisPanel";
 import { SignalsPanel } from "../components/SignalsPanel";
 import { TradeChartOverlay } from "../components/TradeChartOverlay";
 import { TradePopup } from "../components/TradePopup";
 import { useAISignals } from "../hooks/useAISignals";
 import { useCandleTimer } from "../hooks/useCandleTimer";
+import { useChartDrawings } from "../hooks/useChartDrawings";
+import { useChartViewport } from "../hooks/useChartViewport";
 import { useMarketAnalysis } from "../hooks/useMarketAnalysis";
 import { useMultiTimeframe } from "../hooks/useMultiTimeframe";
+import { useNewsSentiment } from "../hooks/useNewsSentiment";
 import { useUserProfile } from "../hooks/useQueries";
 import { useTradeHistory } from "../hooks/useTradeHistory";
+import type { Drawing, DrawingPoint } from "../types/drawing";
 import type { TradeRecord } from "../types/trade";
 import {
   type CandleData,
@@ -128,6 +133,30 @@ export function DashboardPage() {
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
+  // Viewport (zoom/pan)
+  const { candleWidth, viewOffset, handleWheel, handlePanDelta } =
+    useChartViewport();
+
+  // Drawing tools
+  const {
+    drawings,
+    activeTool,
+    selectedDrawingId,
+    drawingInProgress,
+    setActiveTool,
+    addDrawing,
+    deleteDrawing,
+    selectDrawing,
+    setDrawingInProgress,
+    generateId,
+  } = useChartDrawings(selectedSymbol, timeframe);
+
+  const [contextMenu, setContextMenu] = useState<{
+    drawingId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
   const handleSymbolOrTimeframeChange = useCallback(
     (sym: string, _tf: string) => {
       setChartData(generateChartData(sym));
@@ -198,6 +227,23 @@ export function DashboardPage() {
     chartData.length > 1 &&
     chartData[chartData.length - 1].price >= chartData[0].price;
 
+  // Keyboard shortcuts for drawing tools
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedDrawingId && document.activeElement?.tagName !== "INPUT") {
+          deleteDrawing(selectedDrawingId);
+        }
+      }
+      if (e.key === "Escape") {
+        setActiveTool("cursor");
+        setDrawingInProgress(null);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedDrawingId, deleteDrawing, setActiveTool, setDrawingInProgress]);
+
   // Market analysis engine
   const analysis = useMarketAnalysis(
     selectedSymbol,
@@ -211,12 +257,20 @@ export function DashboardPage() {
     selectedPrice?.price ?? 0,
     chartData,
   );
+  const {
+    headlines: newsHeadlines,
+    overallSentiment,
+    sentimentStrength,
+  } = useNewsSentiment(selectedSymbol);
+
   const { currentSignal, history: signalHistory } = useAISignals(
     selectedSymbol,
     selectedPrice?.price ?? 0,
     chartData,
     analysis,
     mtf,
+    overallSentiment,
+    sentimentStrength,
   );
 
   // Trade history
@@ -279,6 +333,59 @@ export function DashboardPage() {
 
   // Open trades for reference lines
   const openTrades = chartRenderTrades.filter((t) => t.status === "open");
+
+  // Drawing state machine
+  const handleDrawingStart = (point: DrawingPoint) => {
+    if (activeTool === "hline") {
+      addDrawing({
+        id: generateId(),
+        type: "hline",
+        price: point.price,
+        color: "#f59e0b",
+      });
+      return;
+    }
+    if (activeTool === "trendline") {
+      setDrawingInProgress({
+        id: generateId(),
+        type: "trendline",
+        start: point,
+        end: point,
+        color: "#3b82f6",
+      });
+    } else if (activeTool === "rectangle") {
+      setDrawingInProgress({
+        id: generateId(),
+        type: "rectangle",
+        start: point,
+        end: point,
+        color: "#22c55e",
+      });
+    } else if (activeTool === "fibonacci") {
+      setDrawingInProgress({
+        id: generateId(),
+        type: "fibonacci",
+        start: point,
+        end: point,
+        color: "#f59e0b",
+      });
+    }
+  };
+
+  const handleDrawingUpdate = (point: DrawingPoint) => {
+    if (!drawingInProgress) return;
+    setDrawingInProgress({ ...drawingInProgress, end: point } as Drawing);
+  };
+
+  const handleDrawingComplete = (point: DrawingPoint) => {
+    if (!drawingInProgress) return;
+    addDrawing({ ...drawingInProgress, end: point } as Drawing);
+    setDrawingInProgress(null);
+  };
+
+  const handleDrawingClick = (id: string) => {
+    selectDrawing(id || null);
+  };
 
   return (
     <div className="flex flex-col h-screen" style={{ paddingTop: "6rem" }}>
@@ -521,27 +628,52 @@ export function DashboardPage() {
 
           {/* Chart */}
           <div
-            ref={chartContainerRef}
-            className={`flex-1 min-h-0 p-2 transition-all relative ${candleFlash ? "candle-flash" : ""}`}
+            className={`flex-1 min-h-0 flex transition-all ${candleFlash ? "candle-flash" : ""}`}
           >
-            <ChartCanvas
-              chartType={chartType}
-              candles={candleData}
-              chartData={chartData}
-              openTrades={openTrades}
-              selectedConfig={selectedConfig}
-              isUp={isChartUp}
+            {/* Drawing toolbar */}
+            <ChartDrawingToolbar
+              activeTool={activeTool}
+              onToolChange={setActiveTool}
             />
+            {/* Canvas area */}
+            <div
+              ref={chartContainerRef}
+              className="flex-1 min-h-0 p-2 relative"
+            >
+              <ChartCanvas
+                chartType={chartType}
+                candles={candleData}
+                chartData={chartData}
+                openTrades={openTrades}
+                selectedConfig={selectedConfig}
+                isUp={isChartUp}
+                candleWidth={candleWidth}
+                viewOffset={viewOffset}
+                drawings={drawings}
+                activeTool={activeTool}
+                selectedDrawingId={selectedDrawingId}
+                drawingInProgress={drawingInProgress}
+                onWheel={handleWheel}
+                onPanDelta={handlePanDelta}
+                onDrawingStart={handleDrawingStart}
+                onDrawingUpdate={handleDrawingUpdate}
+                onDrawingComplete={handleDrawingComplete}
+                onDrawingClick={handleDrawingClick}
+                onDrawingRightClick={(id, x, y) =>
+                  setContextMenu({ drawingId: id, x, y })
+                }
+              />
 
-            {/* Trade marker overlay */}
-            <TradeChartOverlay
-              trades={chartRenderTrades}
-              chartData={chartData}
-              containerRef={chartContainerRef}
-              priceMin={priceMin}
-              priceMax={priceMax}
-              onMarkerClick={(trade, x, y) => setActivePopup({ trade, x, y })}
-            />
+              {/* Trade marker overlay */}
+              <TradeChartOverlay
+                trades={chartRenderTrades}
+                chartData={chartData}
+                containerRef={chartContainerRef}
+                priceMin={priceMin}
+                priceMax={priceMax}
+                onMarkerClick={(trade, x, y) => setActivePopup({ trade, x, y })}
+              />
+            </div>
           </div>
         </main>
 
@@ -767,6 +899,9 @@ export function DashboardPage() {
             analysis={analysis}
             symbol={selectedSymbol}
             mtf={mtf}
+            headlines={newsHeadlines}
+            overallSentiment={overallSentiment}
+            sentimentStrength={sentimentStrength}
           />
         </div>
 
@@ -853,6 +988,58 @@ export function DashboardPage() {
           </ScrollArea>
         </div>
       </div>
+
+      {/* Drawing context menu */}
+      {contextMenu && (
+        <div
+          data-ocid="chart.drawing_context_menu"
+          className="fixed z-50 rounded border py-1 shadow-lg"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+            background: "oklch(0.16 0.012 240)",
+            borderColor: "oklch(0.28 0.02 240)",
+            minWidth: 140,
+          }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <button
+            type="button"
+            data-ocid="chart.drawing_delete_button"
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors"
+            style={{ color: "oklch(0.72 0.18 27)" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "oklch(0.22 0.02 240)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "transparent";
+            }}
+            onClick={() => {
+              deleteDrawing(contextMenu.drawingId);
+              setContextMenu(null);
+            }}
+          >
+            Delete Drawing
+          </button>
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors text-muted-foreground"
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "oklch(0.22 0.02 240)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                "transparent";
+            }}
+            onClick={() => setContextMenu(null)}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {/* Trade popup */}
       {activePopup && (

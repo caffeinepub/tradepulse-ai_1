@@ -1,49 +1,32 @@
 # TradePulse AI
 
 ## Current State
-- Professional dark trading terminal with live price data (Binance WebSocket for crypto, simulated for forex/gold/indices)
-- AI Signal Engine generates BUY/SELL/HOLD signals with entry, SL, TP, RR, probability, trend, tradeType
-- Market Analysis Engine: real-time trend, momentum score, structure events (BOS, CHOCH, Breakout)
-- Multi-Timeframe Analysis: higher TF (4H, 1D) and entry TF (1m, 5m, 15m) trends, confluence score, bias
-- Chart: line chart with candle timer, timeframe switching (1m, 5m, 15m, 1h, 4h, 1D)
-- Trade Visualization: markers, SL/TP lines, entry/exit on chart canvas via TradeChartOverlay
-- Demo account tracking
-- SignalsPanel shows current signal and history
-- Signals Panel and Market Analysis Panel side by side below the chart
+The chart is a canvas-based renderer (`ChartCanvas.tsx`) that supports Candlestick, Line, Area, and Bar chart types. It renders trade overlays (entry/SL/TP lines) for open trades and uses a separate SVG overlay (`TradeChartOverlay.tsx`) for trade markers. The chart is static — no pan, no zoom, and no drawing tools. `DashboardPage.tsx` hosts the chart with a fixed plot area.
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Candlestick chart type** (default): OHLC candles with green/red coloring, real-time updates
-- **Chart type switcher** in toolbar inline with timeframe buttons: Candlestick | Line | Area | Bar
-- **Area chart type** and **Bar chart type** in chart renderer
-- **TP1, TP2, TP3** fields to AISignal interface (replace single takeProfit)
-- **Confidence breakdown** fields to AISignal: trendAlignment, indicatorConfluence, volumeConfirmation, structureScore contributing to final confidence %
-- **200 USDT daily loss limit** in useTradeHistory / demo trading logic: track daily PnL, stop opening new demo trades when loss >= 200 USDT, reset at start of new trading day
-- **Daily loss limit status indicator** in the dashboard (badge/banner when limit hit)
-- Candle data generation: generate OHLC candle history and update current candle in real time
+- **Chart viewport state**: `viewOffset` (horizontal pan index) and `candleWidth` (pixels per candle/zoom level) managed in `DashboardPage` or a new `useChartViewport` hook
+- **Mouse/touch interactions on canvas**: scroll to zoom anchored to cursor position; click-drag to pan; all interactions work across all 4 chart types
+- **Drawing tools engine** (`useChartDrawings` hook): manages drawing state per timeframe, handles creation, selection, movement, deletion
+- **Drawing toolbar component** (`ChartDrawingToolbar.tsx`): vertical toolbar on the left side of the chart with 4 tool buttons: Trendline, Horizontal Line, Rectangle, Fibonacci Retracement; cursor icon + pointer tool to return to normal
+- **Drawing renderer**: all drawings rendered on the chart canvas as part of the draw loop — trendlines, horizontal lines, rectangles, fibonacci levels (0%, 23.6%, 38.2%, 50%, 61.8%, 100%) with labeled price levels
+- **Drawing interaction layer**: canvas mouse events for click-to-start, drag-to-place, click-to-select, drag-to-move drawings; right-click context menu with "Delete" option; Delete/Backspace keyboard shortcut for selected drawing
+- **Context menu component** for right-click delete on drawings
 
 ### Modify
-- **aiSignalEngine.ts**: Add TP1/TP2/TP3 calculation, enhance confidence score with 4 components (trend alignment 0-25, indicator confluence 0-25, volume confirmation 0-25, structure signals 0-25), rename `probability` to `confidence`, add `Sideways` to trend type
-- **SignalsPanel.tsx**: Show TP1, TP2, TP3 separately; show confidence with breakdown; update field names
-- **useTradeHistory.ts**: Integrate 200 USDT daily loss limit; use TP1/TP2/TP3 from signal; track dailyPnL; expose `dailyLossLimitHit` boolean and `dailyPnl` value
-- **DashboardPage.tsx**: 
-  - Add chart type state (candlestick | line | area | bar), pass to chart renderer
-  - Add chart type buttons in toolbar next to timeframe selector
-  - Show daily loss limit status badge when limit is hit
-- **Chart renderer** (inline in DashboardPage or dedicated component): Support candlestick OHLC rendering; area chart fill; bar chart rendering; all chart types must render trade overlay lines/markers
-- **TradeChartOverlay.tsx**: Accept and display TP1/TP2/TP3 lines separately on canvas (TP1 green-solid, TP2 green-dashed, TP3 green-dotted)
-- **priceSimulator.ts**: Add `generateCandleData` function that returns `{time, open, high, low, close}[]` for chart rendering; maintain live candle that updates with each price tick
+- `ChartCanvas.tsx`: accept `viewOffset` and `candleWidth` props; render only the visible candle slice based on viewport; add zoom/pan mouse event handlers; render drawings layer on canvas; accept `drawings`, `activeTool`, `onDrawingStart`, `onDrawingUpdate`, `onDrawingComplete`, `onDrawingSelect`, `onDrawingMove` props
+- `DashboardPage.tsx`: add drawing toolbar to the left of the chart; wire viewport state and drawing state; layout updated so chart has drawing toolbar on left
+- `TradeChartOverlay.tsx`: update plot area constants to account for drawing toolbar width on left side
 
 ### Remove
-- Single `takeProfit` field from AISignal (replaced by tp1, tp2, tp3)
+- Nothing removed; all existing overlays preserved
 
 ## Implementation Plan
-1. Update `AISignal` interface: add `tp1`, `tp2`, `tp3`, rename `probability` -> `confidence`, add `Sideways` to trend union, add confidence breakdown fields
-2. Update `aiSignalEngine.ts`: calculate TP1/TP2/TP3 levels, compute 4-component confidence score
-3. Update `priceSimulator.ts`: add OHLC candle data generator and live candle updater
-4. Update `useTradeHistory.ts`: 200 USDT daily loss cap logic, use tp1/tp2/tp3 from signal
-5. Update `SignalsPanel.tsx`: display tp1/tp2/tp3, updated confidence display
-6. Update chart rendering in DashboardPage: candlestick (default), line, area, bar chart types with switcher in toolbar
-7. Update `TradeChartOverlay.tsx`: render TP1/TP2/TP3 as separate lines with distinct styling
-8. Add daily loss status indicator to dashboard
+1. Create `src/frontend/src/hooks/useChartViewport.ts` — manages candleWidth (zoom), viewOffset (pan), exposes handlers for wheel zoom and drag pan
+2. Create `src/frontend/src/hooks/useChartDrawings.ts` — manages drawings map keyed by timeframe, active tool, selected drawing, drawing-in-progress; exposes CRUD operations
+3. Create `src/frontend/src/types/drawing.ts` — TypeScript types for Drawing (trendline, hline, rectangle, fibonacci) with start/end coordinates in price/index space
+4. Create `src/frontend/src/components/ChartDrawingToolbar.tsx` — vertical icon toolbar, tool selection state
+5. Rewrite `ChartCanvas.tsx` — add viewport slice logic, pan/zoom mouse handlers, drawing render layer, drawing interaction hit-testing
+6. Update `DashboardPage.tsx` — integrate drawing toolbar, viewport hook, drawings hook; layout chart area as flex row with toolbar + canvas
+7. Update `TradeChartOverlay.tsx` — adjust for new plot area with toolbar offset

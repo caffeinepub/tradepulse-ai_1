@@ -1,6 +1,13 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { ArrowDown, ArrowUp, BarChart2, Layers, Zap } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  BarChart2,
+  Layers,
+  Newspaper,
+  Zap,
+} from "lucide-react";
 import type {
   MarketAnalysis,
   StructureEvent,
@@ -9,11 +16,15 @@ import type {
   MultiTimeframeAnalysis,
   TFTrend,
 } from "../utils/multiTimeframeEngine";
+import type { NewsItem, SentimentLabel } from "../utils/newsService";
 
 interface MarketAnalysisPanelProps {
   analysis: MarketAnalysis | null;
   symbol: string;
   mtf?: MultiTimeframeAnalysis | null;
+  headlines?: NewsItem[];
+  overallSentiment?: SentimentLabel;
+  sentimentStrength?: number;
 }
 
 function EventTypeBadge({ type }: { type: StructureEvent["type"] }) {
@@ -83,6 +94,9 @@ export function MarketAnalysisPanel({
   analysis,
   symbol,
   mtf,
+  headlines = [],
+  overallSentiment = "Neutral",
+  sentimentStrength = 50,
 }: MarketAnalysisPanelProps) {
   const trendColor =
     analysis?.trend === "Bullish"
@@ -447,6 +461,111 @@ export function MarketAnalysisPanel({
                     </div>
                   </div>
                 </div>
+              </div>
+
+              <Separator className="opacity-40" />
+
+              {/* Market Sentiment */}
+              <div data-ocid="analysis.sentiment.panel">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2">
+                  <Newspaper className="w-3 h-3" />
+                  Market Sentiment
+                </div>
+
+                {/* Sentiment badge + strength */}
+                <div className="flex items-center justify-between mb-1.5">
+                  <span
+                    data-ocid="analysis.sentiment.badge"
+                    className={`inline-flex items-center px-2 py-0.5 rounded border text-[9px] font-bold tracking-wide ${
+                      overallSentiment === "Bullish"
+                        ? "bg-buy/10 border-buy/30 text-buy"
+                        : overallSentiment === "Bearish"
+                          ? "bg-sell/10 border-sell/30 text-sell"
+                          : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                    }`}
+                  >
+                    {overallSentiment === "Bullish"
+                      ? "▲"
+                      : overallSentiment === "Bearish"
+                        ? "▼"
+                        : "●"}{" "}
+                    {overallSentiment}
+                  </span>
+                  <span className="font-mono-num text-[10px] text-foreground">
+                    {sentimentStrength}%
+                  </span>
+                </div>
+
+                {/* Strength bar */}
+                <div
+                  data-ocid="analysis.sentiment.bar"
+                  className="rounded-full overflow-hidden mb-2"
+                  style={{ height: "4px", background: "oklch(0.22 0.012 240)" }}
+                >
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${sentimentStrength}%`,
+                      background:
+                        overallSentiment === "Bullish"
+                          ? "oklch(0.72 0.18 145)"
+                          : overallSentiment === "Bearish"
+                            ? "oklch(0.62 0.22 27)"
+                            : "oklch(0.72 0.18 60)",
+                    }}
+                  />
+                </div>
+
+                {/* Headlines list */}
+                {headlines.length === 0 ? (
+                  <div className="text-[10px] text-muted-foreground py-2">
+                    Fetching market news...
+                  </div>
+                ) : (
+                  <div
+                    data-ocid="analysis.sentiment.headlines.list"
+                    className="space-y-1 overflow-y-auto pr-0.5"
+                    style={{ maxHeight: "180px" }}
+                  >
+                    {headlines.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        data-ocid={`analysis.sentiment.headline.${idx + 1}`}
+                        className={`px-1.5 py-1 rounded text-[9px] ${idx % 2 === 0 ? "bg-secondary/30" : ""}`}
+                      >
+                        <div className="flex items-start gap-1.5 mb-0.5">
+                          <span
+                            className={`shrink-0 px-1 py-0 rounded border font-bold text-[8px] tracking-wider ${
+                              item.sentiment === "Bullish"
+                                ? "bg-buy/10 border-buy/30 text-buy"
+                                : item.sentiment === "Bearish"
+                                  ? "bg-sell/10 border-sell/30 text-sell"
+                                  : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                            }`}
+                          >
+                            {item.sentiment === "Bullish"
+                              ? "B"
+                              : item.sentiment === "Bearish"
+                                ? "S"
+                                : "N"}
+                          </span>
+                          <span className="text-[10px] text-foreground/80 leading-tight line-clamp-2 flex-1">
+                            {item.headline}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-muted-foreground pl-5">
+                          <span>{item.source}</span>
+                          <span className="font-mono-num">
+                            {Math.floor(
+                              (Date.now() - item.timestamp.getTime()) / 60000,
+                            )}
+                            m ago
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}

@@ -5,11 +5,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
-  useNavigate,
 } from "@tanstack/react-router";
 import { Navbar } from "./components/Navbar";
 import { TickerBar } from "./components/TickerBar";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
@@ -63,12 +62,19 @@ const profileRoute = createRoute({
   component: ProfilePage,
 });
 
+const analyticsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/analytics",
+  component: AnalyticsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   registerRoute,
   dashboardRoute,
   profileRoute,
+  analyticsRoute,
 ]);
 
 const router = createRouter({ routeTree });
