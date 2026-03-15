@@ -117,3 +117,88 @@ export function disconnectTwelveData(): void {
   activeSymbol = null;
   priceCallback = null;
 }
+
+// ─── REST API: Real OHLC Candle Data ────────────────────────────────────────
+
+export interface Candle {
+  time: number; // Unix timestamp (seconds)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+const FOREX_SYMBOL_MAP: Record<string, string> = {
+  "EUR/USD": "EUR/USD",
+  "GBP/USD": "GBP/USD",
+  "USD/JPY": "USD/JPY",
+  "XAU/USD": "XAU/USD",
+};
+
+/** Fetch real OHLC candles from Twelve Data REST API */
+export async function fetchCandles(
+  pair: string,
+  interval: "5min" | "15min",
+  outputsize = 50,
+): Promise<Candle[]> {
+  const symbol = FOREX_SYMBOL_MAP[pair] ?? pair;
+  const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=${outputsize}&apikey=${TWELVE_DATA_API_KEY}`;
+
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+
+    if (json.status === "error") {
+      console.error("Twelve Data error:", json.message);
+      return [];
+    }
+
+    // Twelve Data returns newest-first — reverse to oldest-first
+    const values: any[] = json.values ?? [];
+    return values.reverse().map((v) => ({
+      time: Math.floor(new Date(v.datetime).getTime() / 1000),
+      open: Number.parseFloat(v.open),
+      high: Number.parseFloat(v.high),
+      low: Number.parseFloat(v.low),
+      close: Number.parseFloat(v.close),
+      volume: Number.parseFloat(v.volume ?? "0"),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Fetch latest live price from Twelve Data REST API */
+export async function fetchLivePrice(pair: string): Promise<number> {
+  const symbol = FOREX_SYMBOL_MAP[pair] ?? pair;
+  const url = `https://api.twelvedata.com/price?symbol=${symbol}&apikey=${TWELVE_DATA_API_KEY}`;
+
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+    return Number.parseFloat(json.price ?? "0");
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Start polling candles every 60 seconds (safe for free plan rate limits).
+ * Returns a cleanup function to stop polling.
+ */
+export function startCandlePolling(
+  pair: string,
+  interval: "5min" | "15min",
+  onUpdate: (candles: Candle[]) => void,
+): () => void {
+  const fetchAndNotify = async () => {
+    const candles = await fetchCandles(pair, interval);
+    if (candles.length > 0) onUpdate(candles);
+  };
+
+  fetchAndNotify(); // fetch immediately on start
+  const timer = setInterval(fetchAndNotify, 60_000);
+
+  return () => clearInterval(timer);
+}

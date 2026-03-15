@@ -47,9 +47,33 @@ import {
   updatePricesWithScale,
 } from "../utils/priceSimulator";
 import {
+  type Candle,
   connectTwelveData,
   disconnectTwelveData,
+  startCandlePolling,
 } from "../utils/twelveDataService";
+
+const FOREX_POLLING_SYMBOLS = new Set([
+  "EUR/USD",
+  "GBP/USD",
+  "USD/JPY",
+  "XAU/USD",
+]);
+
+function convertTwelveDataCandles(candles: Candle[]): CandleData[] {
+  return candles.map((c, index) => {
+    const d = new Date(c.time * 1000);
+    const timeStr = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    return {
+      time: timeStr,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      index,
+    };
+  });
+}
 
 function getCandleParams(tf: string): { points: number; timeframeMs: number } {
   switch (tf) {
@@ -257,6 +281,22 @@ export function DashboardPage() {
       disconnectTwelveData();
     };
   }, [selectedSymbol]);
+
+  // Fetch real OHLC candles from Twelve Data REST API for Forex pairs on 5m/15m
+  useEffect(() => {
+    if (!FOREX_POLLING_SYMBOLS.has(selectedSymbol)) return;
+    if (timeframe !== "5m" && timeframe !== "15m") return;
+
+    const interval = timeframe === "5m" ? "5min" : "15min";
+    const stop = startCandlePolling(selectedSymbol, interval, (candles) => {
+      const converted = convertTwelveDataCandles(candles);
+      if (converted.length > 0) {
+        setCandleData(converted);
+        livePriceRef.current = candles[candles.length - 1].close;
+      }
+    });
+    return stop;
+  }, [selectedSymbol, timeframe]);
 
   const handleSymbolOrTimeframeChange = useCallback(
     (sym: string, tf: string) => {

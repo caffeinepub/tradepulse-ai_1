@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  SUPPORTED_PAIRS,
   type UnifiedSignal,
   computeUnifiedSignal,
+  computeUnifiedSignalSync,
 } from "../utils/unifiedSignalEngine";
 
 export function useUnifiedSignal(params: {
@@ -41,34 +43,51 @@ export function useUnifiedSignal(params: {
   useEffect(() => {
     if (chartData.length === 0) return;
     const latest = chartData.map((d) => d.price);
-    // Use chart data as the base, then append current live price
     pricesRef.current = latest.slice(-99);
     if (price > 0) pricesRef.current.push(price);
   }, [chartData, price]);
 
+  // Determine if this pair+timeframe supports real candle data
+  const isRealCandleSupported =
+    SUPPORTED_PAIRS.includes(symbol) &&
+    (timeframe === "5m" || timeframe === "15m");
+
   // 1.5-second evaluation loop
   useEffect(() => {
-    const evaluate = () => {
-      const ps = pricesRef.current;
-      if (ps.length < 2) return;
-      const sig = computeUnifiedSignal(ps, timeframe, symbol, positionSize);
+    let cancelled = false;
+
+    const evaluate = async () => {
+      let sig: UnifiedSignal;
+
+      if (isRealCandleSupported) {
+        // Async path: fetch real candles from Twelve Data
+        sig = await computeUnifiedSignal(symbol, timeframe, positionSize);
+      } else {
+        // Sync path: use tick-based prices for crypto / unsupported pairs
+        const ps = pricesRef.current;
+        if (ps.length < 2) return;
+        sig = computeUnifiedSignalSync(ps, timeframe, symbol, positionSize);
+      }
+
+      if (cancelled) return;
+
       setCurrentSignal(sig);
 
-      // Add to history when signal changes or is BUY/SELL
       const prev = prevSignalRef.current;
       const isNew = !prev || prev.signal !== sig.signal;
       if (sig.signal !== "HOLD" && isNew) {
         setHistory((h) => [sig, ...h].slice(0, 50));
-      } else if (sig.signal === "HOLD" && prev && prev.signal !== "HOLD") {
-        // transition to HOLD: don't add to history
       }
       prevSignalRef.current = sig;
     };
 
     evaluate();
     const id = setInterval(evaluate, 1500);
-    return () => clearInterval(id);
-  }, [timeframe, symbol, positionSize]);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [timeframe, symbol, positionSize, isRealCandleSupported]);
 
   return { currentSignal, history };
 }
