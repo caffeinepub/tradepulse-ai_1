@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { IntraSignal } from "../hooks/use15MSignalEngine";
 import {
   type Drawing,
   type DrawingPoint,
@@ -98,6 +99,7 @@ interface ChartCanvasProps {
   onYAxisDrag?: (deltaY: number) => void;
   onFreePanDelta?: (dx: number, dy: number) => void;
   onDoubleClick?: () => void;
+  intra15mSignals?: IntraSignal[];
 }
 
 function mapY(
@@ -722,6 +724,7 @@ export function ChartCanvas({
   onYAxisDrag,
   onFreePanDelta,
   onDoubleClick,
+  intra15mSignals,
 }: ChartCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -755,6 +758,7 @@ export function ChartCanvas({
     selectedConfig,
     isUp,
     candleWidth,
+    intra15mSignals,
     viewOffset,
     drawings,
     activeTool,
@@ -814,6 +818,7 @@ export function ChartCanvas({
     onYAxisDrag,
     onFreePanDelta,
     onDoubleClick,
+    intra15mSignals,
   };
   smcSetTooltipRef.current = setSmcTooltip;
 
@@ -1318,6 +1323,61 @@ export function ChartCanvas({
       }
 
       ctx.restore();
+
+      // ── 15M Intraday Signal Markers ──
+      const signals15m = p.intra15mSignals;
+      if (
+        signals15m &&
+        signals15m.length > 0 &&
+        p.selectedTimeframe === "15m"
+      ) {
+        for (const sig of signals15m) {
+          if (sig.signal === "NO TRADE") continue;
+          const sigPrice = sig.entryPrice;
+          const sy = mapY(sigPrice, pMin, pMax, PT, PB);
+          if (sy < PT || sy > PB) continue;
+
+          // Find candle index closest to signal time
+          const sigTs = new Date(sig.signalTime).getTime();
+          let closestIdx = 0;
+          let closestDiff = Number.POSITIVE_INFINITY;
+          for (let ci = 0; ci < cls.length; ci++) {
+            const diff = Math.abs(new Date(cls[ci].time).getTime() - sigTs);
+            if (diff < closestDiff) {
+              closestDiff = diff;
+              closestIdx = ci;
+            }
+          }
+
+          const relIdx = closestIdx - visibleStart;
+          const sx = PL + relIdx * cw + cw / 2;
+          if (sx < PL || sx > PR) continue;
+
+          const isBuy = sig.signal === "BUY";
+          ctx.save();
+          ctx.fillStyle = isBuy ? "#22d3ee" : "#fb923c"; // cyan / amber
+          ctx.strokeStyle = isBuy ? "#0e7490" : "#c2410c";
+          ctx.lineWidth = 1;
+
+          const size = 6;
+          ctx.beginPath();
+          if (isBuy) {
+            // Upward triangle
+            ctx.moveTo(sx, sy - size);
+            ctx.lineTo(sx + size, sy + size);
+            ctx.lineTo(sx - size, sy + size);
+          } else {
+            // Downward triangle
+            ctx.moveTo(sx, sy + size);
+            ctx.lineTo(sx + size, sy - size);
+            ctx.lineTo(sx - size, sy - size);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
     }
   }, []);
 

@@ -111,9 +111,7 @@ function useExpiryCountdown(expiresAt: number | null): {
   const remaining = expiresAt - now;
   if (remaining <= 0) return { display: "Expired", pct: 0, expired: true };
 
-  // Determine total duration from the remaining+elapsed pattern
-  // We'll just show the countdown
-  const totalMs = expiresAt - (now - (now % 1000)); // approx
+  const totalMs = expiresAt - (now - (now % 1000));
   const pct = Math.max(0, Math.min(100, (remaining / totalMs) * 100));
 
   const hours = Math.floor(remaining / 3_600_000);
@@ -172,6 +170,12 @@ export function SignalsPanel({
 
   const contextualMessage = getContextualHoldMessage(smcContext);
 
+  // The specific hold reason from the AI engine
+  const holdReason =
+    currentSignal?.holdReason ??
+    currentSignal?.confirmationReason ??
+    "Scanning for setup...";
+
   // Alert system: detect new signals
   useEffect(() => {
     if (!currentSignal) return;
@@ -198,7 +202,6 @@ export function SignalsPanel({
     }
   }, [currentSignal, soundEnabled]);
 
-  // Expiry color
   const expiryColor = isExpired
     ? "text-sell"
     : expiryPct > 50
@@ -262,7 +265,7 @@ export function SignalsPanel({
             className="rounded p-3 terminal-border border-l-2 border-l-amber-500/40"
           >
             {/* HOLD label + pulsing dot */}
-            <div className="flex items-center gap-2.5 mb-2">
+            <div className="flex items-center gap-2.5 mb-1.5">
               <div
                 className="w-3 h-3 rounded-full bg-amber-400 animate-pulse shrink-0"
                 style={{ boxShadow: "0 0 8px oklch(0.82 0.18 85 / 0.6)" }}
@@ -272,9 +275,12 @@ export function SignalsPanel({
               </span>
             </div>
 
-            {/* Contextual message */}
-            <p className="text-[9px] text-muted-foreground leading-tight mb-1.5">
-              {contextualMessage}
+            {/* Hold reason from AI engine */}
+            <p
+              data-ocid="signals.hold_reason"
+              className="text-xs text-muted-foreground mt-1 mb-1.5 italic leading-tight"
+            >
+              {isHoldOrNull && currentSignal ? holdReason : contextualMessage}
             </p>
 
             {/* AI monitoring */}

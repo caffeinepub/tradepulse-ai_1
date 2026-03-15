@@ -8,6 +8,19 @@ type Listener = () => void;
 let trades: TradeRecord[] = [];
 const listeners = new Set<Listener>();
 
+// ── Daily loss tracking ──────────────────────────────────────────
+let dailyLoss = 0;
+let dailyLossLimit = 500; // USDT
+let lastResetDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+function checkDayReset() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== lastResetDate) {
+    dailyLoss = 0;
+    lastResetDate = today;
+  }
+}
+
 export const tradeStore = {
   getTrades(): TradeRecord[] {
     return trades;
@@ -26,6 +39,30 @@ export const tradeStore = {
   },
   clear(): void {
     trades = [];
+    notify();
+  },
+
+  // ── Daily loss management ────────────────────────────────────
+  isDailyLimitReached(): boolean {
+    checkDayReset();
+    return dailyLoss >= dailyLossLimit;
+  },
+  getDailyLoss(): number {
+    checkDayReset();
+    return dailyLoss;
+  },
+  getDailyLossLimit(): number {
+    return dailyLossLimit;
+  },
+  addClosedPnL(pnl: number): void {
+    checkDayReset();
+    if (pnl < 0) {
+      dailyLoss += Math.abs(pnl);
+    }
+    notify();
+  },
+  setDailyLossLimit(limit: number): void {
+    dailyLossLimit = limit;
     notify();
   },
 };

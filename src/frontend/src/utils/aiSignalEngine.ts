@@ -22,6 +22,8 @@ export interface AISignal {
   trend: "Bullish" | "Bearish" | "Sideways";
   tradeType: "Scalp" | "Intraday" | "Swing" | "Position";
   confirmationReason: string;
+  /** Short human-readable reason why the AI is holding (only set when signal === "HOLD") */
+  holdReason?: string;
   expectedDuration: string;
   positionSize: number;
   timestamp: Date;
@@ -93,7 +95,6 @@ function getTradeTypeFromTimeframe(
   const t = tf.toLowerCase();
   if (t === "1m" || t === "3m" || t === "5m") return "Scalp";
   if (t === "15m" || t === "30m") {
-    // Flexible override: very high confidence + extreme short-term momentum
     if (
       confidence !== undefined &&
       volatility !== undefined &&
@@ -105,7 +106,6 @@ function getTradeTypeFromTimeframe(
     return "Intraday";
   }
   if (t === "1h") {
-    // Flexible override: high confidence + strong momentum on 1h
     if (
       confidence !== undefined &&
       volatility !== undefined &&
@@ -190,9 +190,7 @@ function isNearSessionOpen(): boolean {
   const utcHour = now.getUTCHours();
   const utcMin = now.getUTCMinutes();
   const totalMin = utcHour * 60 + utcMin;
-  // LSE open: 08:00 UTC ± 60 min = 420-540
   const nearLSE = totalMin >= 420 && totalMin <= 540;
-  // NYSE open: 13:30 UTC ± 60 min = 750-870
   const nearNYSE = totalMin >= 750 && totalMin <= 870;
   return nearLSE || nearNYSE;
 }
@@ -215,6 +213,7 @@ function buildHoldSignal(
         : selectedTimeframe === "1h" || selectedTimeframe === "4h"
           ? "Swing"
           : "Position";
+  const holdReason = reason ?? "Scanning for setup...";
   return {
     id: `${symbol}-hold-${Date.now()}`,
     asset: symbol,
@@ -234,7 +233,8 @@ function buildHoldSignal(
     },
     trend: "Sideways",
     tradeType,
-    confirmationReason: reason ?? "Scanning for setup...",
+    confirmationReason: holdReason,
+    holdReason,
     expectedDuration: "—",
     positionSize: positionSize ?? lotSize,
     timestamp: new Date(),
@@ -255,7 +255,7 @@ export function generateSignal(
   marketType?: MarketType,
 ): AISignal {
   const prices = chartData.map((d) => d.price);
-  const lotSize = positionSize ?? 0.05;
+  const lotSize = positionSize ?? 0.01;
 
   const shortEMA = prices.length >= 5 ? ema(prices.slice(-5), 5) : price;
   const longEMA = prices.length >= 20 ? ema(prices.slice(-20), 20) : price;
@@ -288,7 +288,7 @@ export function generateSignal(
       lotSize,
       selectedTimeframe,
       positionSize,
-      "Outside active trading session (London/NY)",
+      "Outside active trading session",
     );
   }
 
@@ -302,14 +302,19 @@ export function generateSignal(
       lotSize,
       selectedTimeframe,
       positionSize,
-      "Insufficient volatility for commodity trade",
+      "Low volatility",
     );
   }
 
   let signalType: "BUY" | "SELL" | "HOLD";
-  if (shortEMA > longEMA && momentum > 0.1) {
+  // Detect trend clarity — if EMAs are within 0.1% of each other, trend is unclear
+  const emaDiffPct =
+    longEMA !== 0 ? Math.abs((shortEMA - longEMA) / longEMA) : 0;
+  const trendUnclear = emaDiffPct < 0.001;
+
+  if (!trendUnclear && shortEMA > longEMA && momentum > 0.1) {
     signalType = "BUY";
-  } else if (shortEMA < longEMA && momentum < -0.1) {
+  } else if (!trendUnclear && shortEMA < longEMA && momentum < -0.1) {
     signalType = "SELL";
   } else {
     signalType = "HOLD";
@@ -362,6 +367,9 @@ export function generateSignal(
     volumeConfirmation +
     structureSignals;
 
+  // Track the hold reason for when we eventually return HOLD
+  let pendingHoldReason = "Scanning for setup...";
+
   if (analysis) {
     const { trend, momentumScore } = analysis;
     if (trend === "Bullish") {
@@ -369,6 +377,7 @@ export function generateSignal(
         confidence = Math.min(95, Math.round(confidence * 1.1));
       else if (signalType === "SELL" && confidence < 65) {
         signalType = "HOLD";
+        pendingHoldReason = "Trend unclear";
         confidence = Math.round(confidence * 0.9);
       }
     } else if (trend === "Bearish") {
@@ -376,12 +385,15 @@ export function generateSignal(
         confidence = Math.min(95, Math.round(confidence * 1.1));
       else if (signalType === "BUY" && confidence < 65) {
         signalType = "HOLD";
+        pendingHoldReason = "Trend unclear";
         confidence = Math.round(confidence * 0.9);
       }
     } else if (trend === "Sideways") {
       confidence = Math.round(confidence * 0.92);
-      if ((signalType === "BUY" || signalType === "SELL") && confidence < 60)
+      if ((signalType === "BUY" || signalType === "SELL") && confidence < 60) {
         signalType = "HOLD";
+        pendingHoldReason = "Trend unclear";
+      }
     }
     if (
       momentumScore >= 70 &&
@@ -392,11 +404,18 @@ export function generateSignal(
     }
   }
 
+  if (trendUnclear && signalType === "HOLD") {
+    pendingHoldReason = "Trend unclear";
+  }
+
   if (mtf) {
     const { higherTFBias, entryAlignment, confluenceBias, confluenceScore } =
       mtf;
     if (higherTFBias === "Conflict") {
-      if (signalType !== "HOLD") signalType = "HOLD";
+      if (signalType !== "HOLD") {
+        signalType = "HOLD";
+        pendingHoldReason = "No SMC confirmation";
+      }
       confidence = Math.round(confidence * 0.75);
     } else if (higherTFBias === "Bullish") {
       if (entryAlignment >= 2) {
@@ -404,12 +423,14 @@ export function generateSignal(
           confidence = Math.min(95, Math.round(confidence * 1.18));
         else if (signalType === "SELL") {
           signalType = "HOLD";
+          pendingHoldReason = "No SMC confirmation";
           confidence = Math.round(confidence * 0.7);
         }
       } else {
         if (signalType === "BUY") confidence = Math.round(confidence * 0.88);
         else if (signalType === "SELL") {
           signalType = "HOLD";
+          pendingHoldReason = "No SMC confirmation";
           confidence = Math.round(confidence * 0.72);
         }
       }
@@ -419,19 +440,23 @@ export function generateSignal(
           confidence = Math.min(95, Math.round(confidence * 1.18));
         else if (signalType === "BUY") {
           signalType = "HOLD";
+          pendingHoldReason = "No SMC confirmation";
           confidence = Math.round(confidence * 0.7);
         }
       } else {
         if (signalType === "SELL") confidence = Math.round(confidence * 0.88);
         else if (signalType === "BUY") {
           signalType = "HOLD";
+          pendingHoldReason = "No SMC confirmation";
           confidence = Math.round(confidence * 0.72);
         }
       }
     } else if (higherTFBias === "Sideways") {
       confidence = Math.round(confidence * 0.88);
-      if ((signalType === "BUY" || signalType === "SELL") && confidence < 58)
+      if ((signalType === "BUY" || signalType === "SELL") && confidence < 58) {
         signalType = "HOLD";
+        pendingHoldReason = "Liquidity not confirmed";
+      }
     }
     if (confluenceBias === signalType && confluenceScore >= 70)
       confidence = Math.min(95, confidence + 5);
@@ -464,11 +489,11 @@ export function generateSignal(
     if (isNearSessionOpen()) {
       confidence = Math.min(95, confidence + 7);
     }
-    // Require a minimum trend strength (ATR-based) — if vol is very low, reduce confidence
     if (vol < 0.001) {
       confidence = Math.round(confidence * 0.85);
       if (confidence < 55 && (signalType === "BUY" || signalType === "SELL")) {
         signalType = "HOLD";
+        pendingHoldReason = "Low volatility";
       }
     }
   }
@@ -485,7 +510,6 @@ export function generateSignal(
   }
 
   let confirmationReason = "";
-  // Note if flexible override was applied
   const baseTfType = getTradeTypeFromTimeframe(selectedTimeframe);
   if (baseTfType && baseTfType !== tradeType) {
     confirmationReason = `Overridden to ${tradeType} — high confidence + momentum on ${selectedTimeframe}. `;
@@ -497,7 +521,8 @@ export function generateSignal(
     signalType !== "HOLD"
   ) {
     signalType = "HOLD";
-    confirmationReason = "Scalping session limit reached (3/3 trades today)";
+    pendingHoldReason = "Scalping session limit reached (3/3 trades today)";
+    confirmationReason = pendingHoldReason;
   }
 
   const atr = price * Math.max(vol, 0.002);
@@ -609,11 +634,8 @@ export function generateSignal(
     confirmationReason =
       reasons.slice(0, 3).join(" + ") ||
       (signalType === "BUY" ? "Bullish momentum" : "Bearish momentum");
-  } else if (!confirmationReason) {
-    confirmationReason =
-      analysis?.trend === "Sideways"
-        ? "Market sideways, awaiting breakout"
-        : "Conflicting signals, holding position";
+  } else if (!confirmationReason && signalType === "HOLD") {
+    confirmationReason = pendingHoldReason;
   }
 
   return {
@@ -636,6 +658,7 @@ export function generateSignal(
     trend,
     tradeType,
     confirmationReason,
+    holdReason: signalType === "HOLD" ? pendingHoldReason : undefined,
     expectedDuration,
     positionSize: lotSize,
     timestamp: new Date(),

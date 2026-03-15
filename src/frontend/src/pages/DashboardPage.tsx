@@ -5,15 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartCanvas, type ChartType } from "../components/ChartCanvas";
 import { ChartDrawingToolbar } from "../components/ChartDrawingToolbar";
 import { ChartToolbar } from "../components/ChartToolbar";
+import { IntraSignalPanel } from "../components/IntraSignalPanel";
 import { MarketAnalysisPanel } from "../components/MarketAnalysisPanel";
 import type { Notification } from "../components/NotificationsPanel";
 import { NotificationsPanel } from "../components/NotificationsPanel";
 import { OpenTradePanel } from "../components/OpenTradePanel";
+import { RiskManagementWidget } from "../components/RiskManagementWidget";
 import { SessionInfoStrip } from "../components/SessionInfoStrip";
 import { SignalsPanel } from "../components/SignalsPanel";
 import { TradeChartOverlay } from "../components/TradeChartOverlay";
 import { TradePopup } from "../components/TradePopup";
 import { WatchlistPanel } from "../components/WatchlistPanel";
+import { use15MSignalEngine } from "../hooks/use15MSignalEngine";
 import { useAISignals } from "../hooks/useAISignals";
 import { useAutoTrading } from "../hooks/useAutoTrading";
 import { useCandleTimer } from "../hooks/useCandleTimer";
@@ -92,7 +95,7 @@ export function DashboardPage() {
   const [selectedSymbol, setSelectedSymbol] = useState("BTC/USD");
   const [timeframe, setTimeframe] = useState("1h");
   const [chartType, setChartType] = useState<ChartType>("candlestick");
-  const [positionSize, setPositionSize] = useState(0.05);
+  const [positionSize, setPositionSize] = useState(0.01);
   const [scalpsToday, setScalpsToday] = useState(0);
   const scalpsTodayDateRef = useRef(new Date().toDateString());
   const [candleFlash, setCandleFlash] = useState(false);
@@ -435,6 +438,16 @@ export function DashboardPage() {
     dismissSummary,
   } = useStrategyOptimizer(selectedSymbol, closedTrades);
 
+  const { currentSignal: intra15mSignal, history: intra15mHistory } =
+    use15MSignalEngine({
+      symbol: selectedSymbol,
+      price: selectedPrice?.price ?? 0,
+      chartData,
+      selectedTimeframe: timeframe,
+      positionSize,
+      accountBalance: profile?.balance ?? 10000,
+    });
+
   optimizerWeightsRef.current = optimizerWeights;
 
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
@@ -494,6 +507,18 @@ export function DashboardPage() {
       );
     });
   }, []);
+
+  // ── Daily loss state (reactive via tradeStore) ─────────────────────────
+  const [storeDailyLoss, setStoreDailyLoss] = useState(() =>
+    tradeStore.getDailyLoss(),
+  );
+  const storeDailyLossLimit = tradeStore.getDailyLossLimit();
+  useEffect(() => {
+    return tradeStore.subscribe(() => {
+      setStoreDailyLoss(tradeStore.getDailyLoss());
+    });
+  }, []);
+  const storeIsLimitReached = storeDailyLoss >= storeDailyLossLimit;
 
   useAutoTrading(currentSignal, selectedPrice?.price ?? 0, selectedSymbol);
   useLivePnL(selectedPrice?.price ?? 0, selectedSymbol);
@@ -634,6 +659,7 @@ export function DashboardPage() {
     onYAxisDrag: handleYAxisDrag,
     onFreePanDelta: handleFreePanDelta,
     onDoubleClick: toggleFreePanMode,
+    intra15mSignals: intra15mHistory,
   };
 
   // Shared overlays rendered inside chart container
@@ -692,6 +718,11 @@ export function DashboardPage() {
         signalExpiresAt={signalExpiresAt}
         smcContext={smcContext}
       />
+      <IntraSignalPanel
+        currentSignal={intra15mSignal}
+        history={intra15mHistory}
+        selectedTimeframe={timeframe}
+      />
       <OpenTradePanel
         positions={positions}
         positionSize={positionSize}
@@ -719,6 +750,12 @@ export function DashboardPage() {
           const pos = positions.find((p) => p.id === id);
           if (pos) handleClosePosition(id, pos.currentPrice);
         }}
+      />
+      {/* ── Risk Management Widget ── */}
+      <RiskManagementWidget
+        dailyLoss={storeDailyLoss}
+        dailyLossLimit={storeDailyLossLimit}
+        isLimitReached={storeIsLimitReached}
       />
       <div className="px-3 py-2 border-b border-border flex gap-2">
         <Button
