@@ -1,22 +1,32 @@
 # TradePulse AI
 
 ## Current State
-Crypto symbols (BTC, ETH, SOL) use hardcoded `basePrice` values in `priceSimulator.ts`. On load, the chart always starts at the hardcoded value (e.g. BTC = 71055) regardless of the real market price.
+The platform has a full TradingView-style dashboard with candlestick charts rendered on a Canvas element (ChartCanvas.tsx). Price data is fetched from Binance REST API on load and WebSocket for live ticks. Candles are built from simulated drift via `priceSimulator.ts` / `updateLiveCandle`. The current candle is updated each tick. Chart supports zoom/pan (mouse wheel, click-drag), drawing tools, SMC overlays, EMA/VWAP overlays, live price line (dashed), and a countdown timer. The Y-axis uses canvas transforms.
 
 ## Requested Changes (Diff)
 
 ### Add
-- On app init, fetch real-time prices for crypto symbols from the Binance REST API (`https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT"]`) before the simulator starts.
-- A `fetchLiveBinancePrices()` async utility in `priceSimulator.ts` that calls the Binance REST endpoint and updates `basePrice` + seeds the initial `priceState` for each crypto symbol with the real last price.
+- **Y-axis drag-to-scale**: Right-side Y-axis panel becomes draggable. Clicking and dragging up/down stretches or compresses the vertical price scale (yScaleFactor). This is independent of the horizontal zoom.
+- **Free pan mode via double-click**: Double-clicking the chart canvas enters a "free pan" mode. In this mode, click-and-drag moves the chart freely in both X (horizontal) and Y (vertical pan/price offset) directions. A small HUD indicator (e.g. "PAN MODE" badge) appears on the chart. Double-clicking again or pressing Escape exits free pan mode.
+- **Candle OHLC from real price accumulation**: Each live candle must correctly accumulate OHLC from real Binance tick prices. The live candle's `high` and `low` must update as price moves above/below previous high/low. The `close` always equals the latest price. The `open` is locked when the candle opens. This ensures candles go up or down based on real prices.
+- **Vertical price offset (yPanOffset)**: Free pan mode allows dragging the chart vertically, shifting the visible price window up/down independently of the price scale.
 
 ### Modify
-- `priceSimulator.ts`: Add `fetchLiveBinancePrices()` that fetches 24hr ticker data for BTCUSDT, ETHUSDT, SOLUSDT from Binance, then patches the corresponding `SYMBOLS` entries and priceStates.
-- `DashboardPage.tsx` (or wherever the price simulator is initialized): call `fetchLiveBinancePrices()` on mount before starting the price update interval. Show a brief loading state if needed.
+- **ChartCanvas.tsx**: Accept new props: `yScaleFactor` (number, default 1), `yPanOffset` (number, default 0), `onYAxisDrag` (callback for Y-axis drag delta), `freePanMode` (boolean), `onFreePanDelta` (callback for x+y delta during free pan).
+- **ChartCanvas.tsx rendering**: Apply `yScaleFactor` and `yPanOffset` when mapping price to Y pixel coordinate. Only the right-side Y-axis is interactive for drag-to-scale.
+- **useChartViewport.ts**: Add `yScaleFactor`, `yPanOffset`, `handleYAxisDrag`, `setFreePanMode`, `freePanMode` state and handlers.
+- **DashboardPage.tsx**: Wire the new viewport state and handlers into ChartCanvas.
+- **updateLiveCandle in priceSimulator.ts**: Ensure `high = Math.max(prev.high, livePrice)` and `low = Math.min(prev.low, livePrice)` are always applied, so candle extremes reflect all ticks within the period.
 
 ### Remove
 - Nothing removed.
 
 ## Implementation Plan
-1. In `priceSimulator.ts`, add `fetchLiveBinancePrices()` async function that: fetches `https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT"]`, parses `lastPrice`, `highPrice`, `lowPrice`, `priceChange`, `priceChangePercent` from each ticker, updates the matching entry in `SYMBOLS` array's `basePrice`, and sets the corresponding priceState entry.
-2. In `DashboardPage.tsx`, call `fetchLiveBinancePrices()` on mount (useEffect with empty deps), before the price update interval starts. Existing Binance WebSocket for live ticks remains unchanged.
-3. Handle fetch errors gracefully -- fall back to hardcoded values if the fetch fails.
+1. Update `priceSimulator.ts` → `updateLiveCandle` to correctly track high/low accumulation from every tick.
+2. Update `useChartViewport.ts` to add Y-axis scale factor, Y pan offset, free pan mode state and handlers.
+3. Update `ChartCanvas.tsx` to:
+   - Accept and apply `yScaleFactor` and `yPanOffset` in price-to-pixel mapping.
+   - Render Y-axis panel as a draggable zone (mousedown on Y-axis area triggers Y scale drag).
+   - Handle double-click to toggle free pan mode.
+   - In free pan mode, drag moves both X and Y; show a "PAN MODE" badge overlay.
+4. Update `DashboardPage.tsx` to wire new props from `useChartViewport` into `ChartCanvas`.

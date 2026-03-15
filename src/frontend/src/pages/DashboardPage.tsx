@@ -168,8 +168,18 @@ export function DashboardPage() {
   }, []);
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const { candleWidth, viewOffset, handleWheel, handlePanDelta } =
-    useChartViewport();
+  const {
+    candleWidth,
+    viewOffset,
+    yScaleFactor,
+    yPanOffset,
+    freePanMode,
+    handleWheel,
+    handlePanDelta,
+    handleYAxisDrag,
+    handleFreePanDelta,
+    toggleFreePanMode,
+  } = useChartViewport();
 
   const {
     drawings,
@@ -664,6 +674,12 @@ export function DashboardPage() {
                 livePrice={selectedPrice?.price ?? 0}
                 secondsRemaining={secondsRemaining}
                 selectedTimeframe={timeframe}
+                yScaleFactor={yScaleFactor}
+                yPanOffset={yPanOffset}
+                freePanMode={freePanMode}
+                onYAxisDrag={handleYAxisDrag}
+                onFreePanDelta={handleFreePanDelta}
+                onDoubleClick={toggleFreePanMode}
               />
 
               {/* Trade marker overlay */}

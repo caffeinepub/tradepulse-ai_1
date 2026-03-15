@@ -7,14 +7,23 @@ const MAX_CANDLE_WIDTH = 60;
 interface UseChartViewportReturn {
   candleWidth: number;
   viewOffset: number;
+  yScaleFactor: number;
+  yPanOffset: number;
+  freePanMode: boolean;
   handleWheel: (e: WheelEvent, mouseXFraction: number) => void;
   handlePanDelta: (deltaX: number) => void;
+  handleYAxisDrag: (deltaY: number) => void;
+  handleFreePanDelta: (dx: number, dy: number) => void;
+  toggleFreePanMode: () => void;
   visibleCount: (plotWidth: number) => number;
 }
 
 export function useChartViewport(): UseChartViewportReturn {
   const [candleWidth, setCandleWidth] = useState(DEFAULT_CANDLE_WIDTH);
   const [viewOffset, setViewOffset] = useState(0);
+  const [yScaleFactor, setYScaleFactor] = useState(1.0);
+  const [yPanOffset, setYPanOffset] = useState(0);
+  const [freePanMode, setFreePanMode] = useState(false);
 
   const visibleCount = useCallback(
     (plotWidth: number) => Math.max(1, Math.floor(plotWidth / candleWidth)),
@@ -28,19 +37,6 @@ export function useChartViewport(): UseChartViewportReturn {
         MIN_CANDLE_WIDTH,
         Math.min(MAX_CANDLE_WIDTH, prev * zoomFactor),
       );
-      // Adjust viewOffset so the candle under cursor stays fixed
-      // visibleCount changes from oldCount to newCount
-      // anchor candle relative index = mouseXFraction * oldCount
-      // We want: anchorAbsIdx stays the same
-      // anchorRelIdx_old = mouseXFraction * oldCount
-      // anchorRelIdx_new = mouseXFraction * newCount (approx)
-      // Delta in relative idx = mouseXFraction * (newCount - oldCount)
-      // viewOffset adjustment = -delta (positive offset = scroll right = older candles)
-      // Actually: viewOffset stays same, but visibleCount changes
-      // To keep cursor candle: new viewOffset = old viewOffset + (oldCount - newCount) * mouseXFraction
-      // where oldCount based on prev, newCount based on next
-      // We compute this inside the state setter via a callback chain
-      // For simplicity, skip exact adjustment here — it's close enough
       return next;
     });
     // Adjust viewOffset to anchor zoom at cursor
@@ -68,5 +64,47 @@ export function useChartViewport(): UseChartViewportReturn {
     });
   }, []);
 
-  return { candleWidth, viewOffset, handleWheel, handlePanDelta, visibleCount };
+  const handleYAxisDrag = useCallback((deltaY: number) => {
+    // Dragging up (negative deltaY) = zoom in (increase scale factor)
+    // Dragging down (positive deltaY) = zoom out (decrease scale factor)
+    setYScaleFactor((prev) => {
+      const factor = deltaY < 0 ? 1.02 : 0.98;
+      return Math.max(0.1, Math.min(10, prev * factor));
+    });
+  }, []);
+
+  const handleFreePanDelta = useCallback((dx: number, dy: number) => {
+    // Horizontal pan uses existing mechanism
+    setCandleWidth((prevCw) => {
+      const deltaCandles = dx / prevCw;
+      setViewOffset((prev) => Math.max(0, prev - Math.round(deltaCandles)));
+      return prevCw;
+    });
+    // Vertical pan adjusts yPanOffset
+    setYPanOffset((prev) => prev + dy);
+  }, []);
+
+  const toggleFreePanMode = useCallback(() => {
+    setFreePanMode((prev) => {
+      if (prev) {
+        // Exiting free pan mode: reset vertical offset
+        setYPanOffset(0);
+      }
+      return !prev;
+    });
+  }, []);
+
+  return {
+    candleWidth,
+    viewOffset,
+    yScaleFactor,
+    yPanOffset,
+    freePanMode,
+    handleWheel,
+    handlePanDelta,
+    handleYAxisDrag,
+    handleFreePanDelta,
+    toggleFreePanMode,
+    visibleCount,
+  };
 }

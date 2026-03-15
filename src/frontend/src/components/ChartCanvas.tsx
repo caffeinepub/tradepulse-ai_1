@@ -16,7 +16,8 @@ const CANDLE_DOWN = "#ef5350";
 const LABEL_COLOR = "#7b8fa1";
 const GRID_COLOR = "rgba(255,255,255,0.04)";
 
-const PLOT_LEFT = 72;
+// Bug 3 fix: reduce left margin since left Y-axis labels are removed
+const PLOT_LEFT = 10;
 const PLOT_TOP = 10;
 
 // Drawing colors (literal for canvas)
@@ -91,6 +92,12 @@ interface ChartCanvasProps {
   selectedTimeframe?: string;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
+  yScaleFactor?: number;
+  yPanOffset?: number;
+  freePanMode?: boolean;
+  onYAxisDrag?: (deltaY: number) => void;
+  onFreePanDelta?: (dx: number, dy: number) => void;
+  onDoubleClick?: () => void;
 }
 
 function mapY(
@@ -709,6 +716,12 @@ export function ChartCanvas({
   livePrice,
   secondsRemaining,
   selectedTimeframe,
+  yScaleFactor = 1,
+  yPanOffset = 0,
+  freePanMode = false,
+  onYAxisDrag,
+  onFreePanDelta,
+  onDoubleClick,
 }: ChartCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -726,7 +739,10 @@ export function ChartCanvas({
     isDragging: false,
     startX: 0,
     lastX: 0,
+    lastY: 0,
     isDrawing: false,
+    isYAxisDrag: false,
+    lastDblClickTime: 0,
   });
 
   const canvasSizeRef = useRef({ w: 0, h: 0, dpr: 0 });
@@ -758,6 +774,12 @@ export function ChartCanvas({
     livePrice,
     secondsRemaining,
     selectedTimeframe,
+    yScaleFactor,
+    yPanOffset,
+    freePanMode,
+    onYAxisDrag,
+    onFreePanDelta,
+    onDoubleClick,
   });
   propsRef.current = {
     chartType,
@@ -786,6 +808,12 @@ export function ChartCanvas({
     livePrice,
     secondsRemaining,
     selectedTimeframe,
+    yScaleFactor,
+    yPanOffset,
+    freePanMode,
+    onYAxisDrag,
+    onFreePanDelta,
+    onDoubleClick,
   };
   smcSetTooltipRef.current = setSmcTooltip;
 
@@ -818,7 +846,9 @@ export function ChartCanvas({
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.scale(dpr, dpr);
+
+    // Bug 1 fix: reset transform atomically every frame to prevent scale accumulation
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
     const PL = PLOT_LEFT;
@@ -867,6 +897,24 @@ export function ChartCanvas({
     pMin -= pad;
     pMax += pad;
 
+    // Apply vertical scale factor (stretches/compresses price range)
+    const ys = p.yScaleFactor ?? 1;
+    if (ys !== 1) {
+      const mid = (pMin + pMax) / 2;
+      const half = (pMax - pMin) / 2;
+      pMin = mid - half / ys;
+      pMax = mid + half / ys;
+    }
+
+    // Apply vertical pan offset (shift price range up/down)
+    const ypo = p.yPanOffset ?? 0;
+    if (ypo !== 0) {
+      const pricePerPx = (pMax - pMin) / (PB - PT);
+      const priceShift = ypo * pricePerPx;
+      pMin -= priceShift;
+      pMax -= priceShift;
+    }
+
     const vp: ViewportInfo = {
       pMin,
       pMax,
@@ -893,15 +941,7 @@ export function ChartCanvas({
       ctx.stroke();
     }
 
-    // Y-axis labels
-    ctx.fillStyle = LABEL_COLOR;
-    ctx.font = "9px JetBrains Mono, monospace";
-    ctx.textAlign = "right";
-    for (let i = 0; i <= numGridLines; i++) {
-      const price = pMax - (i / numGridLines) * (pMax - pMin);
-      const y = PT + (i / numGridLines) * (PB - PT);
-      ctx.fillText(price.toFixed(prec), PL - 4, y + 3);
-    }
+    // Bug 2 fix: LEFT Y-axis labels block removed — right-side labels only
 
     // Right Y-axis labels
     ctx.fillStyle = LABEL_COLOR;
@@ -1198,7 +1238,8 @@ export function ChartCanvas({
     if (p.drawingInProgress) {
       renderDrawing(ctx, p.drawingInProgress, vp, false, true);
     }
-    // ── Live Price Line ──────────────────────────────────────────────────
+
+    // ── Live Price Line (right-side only, TradingView style) ────────────
     const liveP = p.livePrice;
     if (liveP !== undefined && liveP > 0) {
       const ly = mapY(liveP, pMin, pMax, PT, PB);
@@ -1211,7 +1252,7 @@ export function ChartCanvas({
 
       ctx.save();
 
-      // Dashed line spanning full width from plot left to canvas right edge
+      // Dashed line spanning from plot left edge to right panel boundary (W)
       ctx.strokeStyle = lineColor;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
@@ -1221,7 +1262,7 @@ export function ChartCanvas({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Price label box in right Y-axis panel
+      // Price label box starts at PR + 2 (right Y-axis panel only)
       const prec2 = sc.precision;
       const labelText = liveP.toFixed(prec2);
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
@@ -1310,10 +1351,44 @@ export function ChartCanvas({
     function handleMouseDown(e: MouseEvent) {
       const { activeTool: tool } = propsRef.current;
       const { x, y } = getCanvasPoint(e);
+      const vp = vpRef.current;
+      const PR2 = vp
+        ? vp.plotRight
+        : canvas!.width / (window.devicePixelRatio || 1) - 72;
+
+      // Detect double-click (two clicks within 300ms)
+      const now = Date.now();
+      const dblClick = now - dragRef.current.lastDblClickTime < 300;
+      dragRef.current.lastDblClickTime = now;
+      if (dblClick) {
+        propsRef.current.onDoubleClick?.();
+        return;
+      }
+
+      // Y-axis drag: right 72px area
+      if (x > PR2) {
+        dragRef.current.isYAxisDrag = true;
+        dragRef.current.lastY = y;
+        canvas!.style.cursor = "ns-resize";
+        return;
+      }
+
+      if (propsRef.current.freePanMode) {
+        // In free pan mode, all drags are free pan
+        dragRef.current.isDragging = true;
+        dragRef.current.startX = x;
+        dragRef.current.lastX = x;
+        dragRef.current.lastY = y;
+        dragRef.current.isDrawing = false;
+        canvas!.style.cursor = "grabbing";
+        return;
+      }
+
       if (tool === "cursor") {
         dragRef.current.isDragging = true;
         dragRef.current.startX = x;
         dragRef.current.lastX = x;
+        dragRef.current.lastY = y;
         dragRef.current.isDrawing = false;
         canvas!.style.cursor = "grabbing";
       } else {
@@ -1408,10 +1483,22 @@ export function ChartCanvas({
 
     function handleMouseMove(e: MouseEvent) {
       const { x, y } = getCanvasPoint(e);
+      if (dragRef.current.isYAxisDrag) {
+        const delta = y - dragRef.current.lastY;
+        dragRef.current.lastY = y;
+        propsRef.current.onYAxisDrag?.(delta);
+        return;
+      }
       if (dragRef.current.isDragging && !dragRef.current.isDrawing) {
-        const delta = x - dragRef.current.lastX;
+        const dx = x - dragRef.current.lastX;
+        const dy = y - dragRef.current.lastY;
         dragRef.current.lastX = x;
-        propsRef.current.onPanDelta(delta);
+        dragRef.current.lastY = y;
+        if (propsRef.current.freePanMode) {
+          propsRef.current.onFreePanDelta?.(dx, dy);
+        } else {
+          propsRef.current.onPanDelta(dx);
+        }
       } else if (dragRef.current.isDrawing) {
         const point = mouseToDrawingPoint(x, y);
         if (point) propsRef.current.onDrawingUpdate(point);
@@ -1424,6 +1511,14 @@ export function ChartCanvas({
           canvas!.style.cursor = hit ? "pointer" : "default";
         } else if (propsRef.current.activeTool !== "cursor") {
           canvas!.style.cursor = "crosshair";
+        }
+        // Y-axis hover cursor
+        const vp2 = vpRef.current;
+        const PR3 = vp2
+          ? vp2.plotRight
+          : canvas!.width / (window.devicePixelRatio || 1) - 72;
+        if (x > PR3) {
+          canvas!.style.cursor = "ns-resize";
         }
         // SMC hover tooltip
         const rect2 = canvas!.getBoundingClientRect();
@@ -1445,6 +1540,11 @@ export function ChartCanvas({
     }
 
     function handleMouseUp(e: MouseEvent) {
+      if (dragRef.current.isYAxisDrag) {
+        dragRef.current.isYAxisDrag = false;
+        canvas!.style.cursor = "default";
+        return;
+      }
       if (dragRef.current.isDrawing) {
         const { x, y } = getCanvasPoint(e);
         const point = mouseToDrawingPoint(x, y);
@@ -1454,6 +1554,12 @@ export function ChartCanvas({
       if (dragRef.current.isDragging) {
         dragRef.current.isDragging = false;
         canvas!.style.cursor = "default";
+      }
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && propsRef.current.freePanMode) {
+        propsRef.current.onDoubleClick?.();
       }
     }
 
@@ -1500,6 +1606,7 @@ export function ChartCanvas({
     canvas.addEventListener("click", handleClick);
     canvas.addEventListener("contextmenu", handleContextMenu);
     canvas.addEventListener("mouseleave", handleMouseLeave);
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
@@ -1509,6 +1616,7 @@ export function ChartCanvas({
       canvas.removeEventListener("click", handleClick);
       canvas.removeEventListener("contextmenu", handleContextMenu);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -1544,6 +1652,9 @@ export function ChartCanvas({
     livePrice,
     secondsRemaining,
     selectedTimeframe,
+    yScaleFactor,
+    yPanOffset,
+    freePanMode,
     draw,
   ]);
 
@@ -1557,9 +1668,28 @@ export function ChartCanvas({
         data-ocid="chart.canvas_target"
         style={{
           display: "block",
-          cursor: activeTool === "cursor" ? "default" : "crosshair",
+          cursor: freePanMode
+            ? "move"
+            : activeTool === "cursor"
+              ? "default"
+              : "crosshair",
         }}
       />
+      {freePanMode && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 28,
+            left: "50%",
+            transform: "translateX(-50%)",
+            pointerEvents: "none",
+            zIndex: 30,
+          }}
+          className="bg-amber-500/20 border border-amber-500/40 rounded px-3 py-1 text-xs text-amber-400 font-mono backdrop-blur-sm"
+        >
+          ✋ PAN MODE — double-click to exit
+        </div>
+      )}
       {smcTooltip && (
         <div
           style={{
