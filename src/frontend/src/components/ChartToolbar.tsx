@@ -47,6 +47,7 @@ interface ChartToolbarProps {
   onZoomOut: () => void;
   showDrawingToolbar: boolean;
   onToggleDrawingToolbar: () => void;
+  priceSource?: string;
 }
 
 export function ChartToolbar({
@@ -61,15 +62,28 @@ export function ChartToolbar({
   onZoomOut,
   showDrawingToolbar,
   onToggleDrawingToolbar,
+  priceSource,
 }: ChartToolbarProps) {
   return (
     <div
       className="flex items-center gap-1 px-2 border-b border-border bg-background shrink-0 overflow-x-auto"
       style={{ height: 38 }}
     >
-      {/* Symbol label only */}
+      {/* Symbol label + price source badge */}
       <div className="flex items-center gap-2 shrink-0">
         <span className="text-xs font-bold text-foreground">{symbol}</span>
+        {priceSource && (
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded font-mono shrink-0"
+            style={{
+              background: "oklch(0.22 0.04 240 / 0.8)",
+              border: "1px solid oklch(0.38 0.08 240 / 0.5)",
+              color: "oklch(0.72 0.12 240)",
+            }}
+          >
+            {priceSource}
+          </span>
+        )}
       </div>
 
       <Separator orientation="vertical" className="h-4 mx-0.5 shrink-0" />

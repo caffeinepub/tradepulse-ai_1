@@ -403,6 +403,10 @@ export function DashboardPage() {
   const selectedConfig: SymbolConfig =
     SYMBOLS.find((s) => s.symbol === selectedSymbol) ?? SYMBOLS[0];
   const selectedPrice = prices[selectedSymbol];
+  const CRYPTO_SYMS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
+  const priceSourceLabel = CRYPTO_SYMS.has(selectedSymbol)
+    ? "Price: Binance"
+    : "Price: Twelve Data";
 
   const analysis = useMarketAnalysis(
     selectedSymbol,
@@ -825,6 +829,7 @@ export function DashboardPage() {
             onZoomOut={() => handleWheel({ deltaY: 120 } as WheelEvent, 0.5)}
             showDrawingToolbar={showDrawingToolbar}
             onToggleDrawingToolbar={() => setShowDrawingToolbar((v) => !v)}
+            priceSource={priceSourceLabel}
           />
           {dailyLossLimitHit && (
             <div
@@ -895,6 +900,7 @@ export function DashboardPage() {
               onZoomOut={() => handleWheel({ deltaY: 120 } as WheelEvent, 0.5)}
               showDrawingToolbar={showDrawingToolbar}
               onToggleDrawingToolbar={() => setShowDrawingToolbar((v) => !v)}
+              priceSource={priceSourceLabel}
             />
 
             {dailyLossLimitHit && (

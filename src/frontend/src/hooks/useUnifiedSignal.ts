@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  SUPPORTED_PAIRS,
   type UnifiedSignal,
   computeUnifiedSignal,
   computeUnifiedSignalSync,
 } from "../utils/unifiedSignalEngine";
+
+const CRYPTO_SYMBOLS_SET = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
+const FOREX_SYMBOLS_SET = new Set(["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]);
 
 export function useUnifiedSignal(params: {
   symbol: string;
@@ -48,9 +50,12 @@ export function useUnifiedSignal(params: {
   }, [chartData, price]);
 
   // Determine if this pair+timeframe supports real candle data
+  // Crypto: all timeframes supported via Binance
+  // Forex: only 5m and 15m supported via Twelve Data
   const isRealCandleSupported =
-    SUPPORTED_PAIRS.includes(symbol) &&
-    (timeframe === "5m" || timeframe === "15m");
+    CRYPTO_SYMBOLS_SET.has(symbol) ||
+    (FOREX_SYMBOLS_SET.has(symbol) &&
+      (timeframe === "5m" || timeframe === "15m"));
 
   // 1.5-second evaluation loop
   useEffect(() => {
@@ -60,10 +65,10 @@ export function useUnifiedSignal(params: {
       let sig: UnifiedSignal;
 
       if (isRealCandleSupported) {
-        // Async path: fetch real candles from Twelve Data
+        // Async path: fetch real candles from Binance (crypto) or Twelve Data (forex)
         sig = await computeUnifiedSignal(symbol, timeframe, positionSize);
       } else {
-        // Sync path: use tick-based prices for crypto / unsupported pairs
+        // Sync path: use tick-based prices for unsupported pairs/timeframes
         const ps = pricesRef.current;
         if (ps.length < 2) return;
         sig = computeUnifiedSignalSync(ps, timeframe, symbol, positionSize);

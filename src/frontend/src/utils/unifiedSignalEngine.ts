@@ -1,7 +1,12 @@
 // Unified Signal Engine — single source of truth for both SignalsPanel and IntraSignalPanel
-// Uses real candle data from Twelve Data REST API via fetchCandles()
+// Crypto pairs use Binance REST API; Forex/Gold use Twelve Data REST API
 
-import { fetchCandles, fetchLivePrice } from "./twelveDataService";
+import {
+  fetchBinanceCandles,
+  fetchBinanceLivePrice,
+  fetchCandles,
+  fetchLivePrice,
+} from "./twelveDataService";
 import type { Candle } from "./twelveDataService";
 
 const TF_LABELS: Record<string, string> = {
@@ -17,14 +22,38 @@ const TF_LABELS: Record<string, string> = {
   "1M": "1MO",
 };
 
-// Timeframe → Twelve Data interval mapping (only 5min and 15min are real-candle supported)
-const TF_TO_INTERVAL: Record<string, "5min" | "15min" | null> = {
+// Timeframe → Twelve Data interval mapping (only 5min and 15min are real-candle supported for forex)
+const TF_TO_FOREX_INTERVAL: Record<string, "5min" | "15min" | null> = {
   "5m": "5min",
   "15m": "15min",
 };
 
-// Supported pairs for real candle data
-export const SUPPORTED_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"];
+const CRYPTO_TF_TO_BINANCE: Record<string, string> = {
+  "1m": "1m",
+  "3m": "3m",
+  "5m": "5m",
+  "15m": "15m",
+  "1h": "1h",
+  "4h": "4h",
+  "1d": "1d",
+  "1W": "1w",
+  "1M": "1M",
+};
+
+// Pair sets for routing to different data sources
+const CRYPTO_PAIRS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
+const FOREX_PAIRS = new Set(["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]);
+
+// Supported pairs for real candle data (both crypto and forex)
+export const SUPPORTED_PAIRS = [
+  "BTC/USD",
+  "ETH/USD",
+  "SOL/USD",
+  "EUR/USD",
+  "GBP/USD",
+  "USD/JPY",
+  "XAU/USD",
+];
 
 export function normalizeTimeframeLabel(tf: string): string {
   return TF_LABELS[tf] ?? tf.toUpperCase();
@@ -50,12 +79,39 @@ export interface UnifiedSignal {
   reason: string;
   holdReason?: string;
   id: string;
-  conditionsMet: number; // how many of the 4 conditions were true
+  conditionsMet: number;
   // Legacy compat fields
   trend: "Bullish" | "Bearish" | "Neutral";
   timestamp: Date;
   riskReward: number;
   confirmationReason?: string;
+}
+
+// ── Session filter ───────────────────────────────────────────────────────────
+
+/**
+ * Dead session filter: 17:00 UTC to 07:30 UTC is low-volume for Forex & Crypto.
+ * Returns true if current time is OUTSIDE the dead zone (signals allowed).
+ * Active window: 07:30 UTC to 17:00 UTC
+ */
+function isActiveSession(): boolean {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcMin = now.getUTCMinutes();
+  const totalMins = utcHour * 60 + utcMin;
+
+  // Active: 07:30 UTC (450 min) to 17:00 UTC (1020 min)
+  const activeStart = 7 * 60 + 30; // 450 mins
+  const activeEnd = 17 * 60; // 1020 mins
+
+  return totalMins >= activeStart && totalMins < activeEnd;
+}
+
+function getDeadSessionReason(): string {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcMin = now.getUTCMinutes().toString().padStart(2, "0");
+  return `Outside active session (${utcHour}:${utcMin} UTC) — signals resume at 07:30 UTC`;
 }
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -71,7 +127,6 @@ function calcEMA(data: number[], period: number): number[] {
 }
 
 function calcVWAP(candles: Candle[]): number {
-  // VWAP = sum(typical_price * volume) / sum(volume)
   let sumPV = 0;
   let sumV = 0;
   for (const c of candles) {
@@ -204,36 +259,32 @@ function computeFromCandles(
   const volRatio = avg3Vol > 0 ? lastVol / avg3Vol : 1;
 
   // ── 4 BUY conditions ──
-  const buyC1 = lastEma20 > lastEma50; // EMA20 > EMA50
-  const buyC2 = price > vwap; // Price > VWAP
-  const buyC3 = rsi >= 45 && rsi <= 72; // RSI 45–72
-  const buyC4 = volAboveAvg; // Volume > 3-candle avg
+  const buyC1 = lastEma20 > lastEma50;
+  const buyC2 = price > vwap;
+  const buyC3 = rsi >= 45 && rsi <= 72;
+  const buyC4 = volAboveAvg;
   const buyCount = [buyC1, buyC2, buyC3, buyC4].filter(Boolean).length;
 
   // ── 4 SELL conditions ──
-  const sellC1 = lastEma20 < lastEma50; // EMA20 < EMA50
-  const sellC2 = price < vwap; // Price < VWAP
-  const sellC3 = rsi >= 28 && rsi <= 48; // RSI 28–48
-  const sellC4 = volAboveAvg; // Volume > 3-candle avg
+  const sellC1 = lastEma20 < lastEma50;
+  const sellC2 = price < vwap;
+  const sellC3 = rsi >= 28 && rsi <= 48;
+  const sellC4 = volAboveAvg;
   const sellCount = [sellC1, sellC2, sellC3, sellC4].filter(Boolean).length;
 
-  // ── Signal decision ──
-  // STRONG BUY/SELL = all 4 true, BUY/SELL = any 3 out of 4
   const isStrongBuy = buyCount === 4;
   const isBuy = buyCount >= 3;
   const isStrongSell = sellCount === 4;
   const isSell = sellCount >= 3;
 
-  // Prefer buy direction if tied (unlikely but possible)
   const hasBuySignal = isBuy && !isSell;
   const hasSellSignal = isSell && !isBuy;
-  const hasBothSignals = isBuy && isSell; // resolve by EMA direction
+  const hasBothSignals = isBuy && isSell;
 
   let dir: "BUY" | "SELL" | null = null;
   let conditionsMet = 0;
 
   if (hasBothSignals) {
-    // Use EMA trend as tiebreaker
     dir = buyC1 ? "BUY" : "SELL";
     conditionsMet = dir === "BUY" ? buyCount : sellCount;
   } else if (hasBuySignal) {
@@ -245,7 +296,6 @@ function computeFromCandles(
   }
 
   if (!dir) {
-    // Build HOLD reason
     let holdReason = "Conditions not met (need 3 of 4)";
     const emaGapPct = price > 0 ? Math.abs(lastEma20 - lastEma50) / price : 0;
     if (emaGapPct < 0.0005) {
@@ -262,13 +312,11 @@ function computeFromCandles(
     return holdBase(holdReason);
   }
 
-  // ── Risk management ──
-  const slDist = 1.5 * atr; // Stop Loss = 1.5 × ATR(14)
+  const slDist = 1.5 * atr;
   const stopLoss = dir === "BUY" ? price - slDist : price + slDist;
-  const tp1 = dir === "BUY" ? price + slDist * 2 : price - slDist * 2; // 1:2 RR
-  const tp2 = dir === "BUY" ? price + slDist * 3 : price - slDist * 3; // 1:3 RR
+  const tp1 = dir === "BUY" ? price + slDist * 2 : price - slDist * 2;
+  const tp2 = dir === "BUY" ? price + slDist * 3 : price - slDist * 3;
 
-  // ── Confidence ──
   let confidence = 55 + conditionsMet * 8;
   if (conditionsMet === 4) confidence = Math.max(confidence, 88);
   if (dir === "BUY" && rsi >= 55 && rsi <= 68) confidence += 5;
@@ -370,28 +418,51 @@ export async function computeUnifiedSignal(
     confirmationReason: holdReason,
   });
 
-  // Only supported pairs and intervals
-  if (!SUPPORTED_PAIRS.includes(pair)) {
-    return holdBase(
-      `Pair ${pair} not supported — use EUR/USD, GBP/USD, USD/JPY, XAU/USD`,
-    );
+  // Session filter — block signals during dead hours (17:00–07:30 UTC)
+  if (!isActiveSession()) {
+    return holdBase(getDeadSessionReason());
   }
 
-  const interval = TF_TO_INTERVAL[timeframe];
-  if (!interval) {
-    return holdBase(
-      `Timeframe ${tfLabel} not supported for real candles — use 5M or 15M`,
-    );
+  const isCrypto = CRYPTO_PAIRS.has(pair);
+  const isForex = FOREX_PAIRS.has(pair);
+
+  if (!isCrypto && !isForex) {
+    return holdBase(`Pair ${pair} not supported for real candles`);
   }
 
   try {
+    if (isCrypto) {
+      // Crypto: use Binance REST API — supports all timeframes
+      const binanceInterval = CRYPTO_TF_TO_BINANCE[timeframe] ?? "5m";
+      const [candles, livePrice] = await Promise.all([
+        fetchBinanceCandles(pair, binanceInterval, 60),
+        fetchBinanceLivePrice(pair),
+      ]);
+
+      if (candles.length === 0) {
+        return holdBase("No candle data from Binance (network error)");
+      }
+
+      return computeFromCandles(candles, livePrice, timeframe, positionSize);
+    }
+
+    // Forex/Gold: use Twelve Data REST API — only 5min and 15min supported
+    const interval = TF_TO_FOREX_INTERVAL[timeframe];
+    if (!interval) {
+      return holdBase(
+        `Timeframe ${tfLabel} not supported for Forex — use 5M or 15M`,
+      );
+    }
+
     const [candles, livePrice] = await Promise.all([
       fetchCandles(pair, interval, 60),
       fetchLivePrice(pair),
     ]);
 
     if (candles.length === 0) {
-      return holdBase("No candle data available (API quota or network error)");
+      return holdBase(
+        "No candle data from Twelve Data (API quota or network error)",
+      );
     }
 
     return computeFromCandles(candles, livePrice, timeframe, positionSize);
@@ -402,7 +473,6 @@ export async function computeUnifiedSignal(
 }
 
 // ── Sync fallback: compute from tick-based price array (legacy support) ──────
-// Used by panels that still pass a prices[] array directly (non-forex timeframes)
 
 export function computeUnifiedSignalSync(
   prices: number[],
@@ -447,7 +517,7 @@ export function computeUnifiedSignalSync(
     high: Math.max(p, i > 0 ? prices[i - 1] : p),
     low: Math.min(p, i > 0 ? prices[i - 1] : p),
     close: p,
-    volume: 0, // no real volume available in tick mode
+    volume: 0,
   }));
 
   return computeFromCandles(
