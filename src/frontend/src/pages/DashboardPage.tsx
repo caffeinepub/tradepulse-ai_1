@@ -286,7 +286,19 @@ export function DashboardPage() {
     handleYAxisDrag,
     handleFreePanDelta,
     toggleFreePanMode,
+    setContainerWidth,
   } = useChartViewport();
+
+  // Sync container width to viewport hook for accurate candleWidth computation
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+    const obs = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setContainerWidth(w);
+    });
+    obs.observe(chartContainerRef.current);
+    return () => obs.disconnect();
+  }, [setContainerWidth]);
 
   const {
     drawings,

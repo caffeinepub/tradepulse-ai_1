@@ -1413,6 +1413,11 @@ export function ChartCanvas({
       e.preventDefault();
       const vp = vpRef.current;
       if (!vp) return;
+      if (e.ctrlKey) {
+        // Ctrl+scroll = vertical zoom (Y-axis scale)
+        propsRef.current.onYAxisDrag?.(e.deltaY * 0.5);
+        return;
+      }
       const { x } = getCanvasPoint(e);
       const plotWidth = vp.plotRight - vp.plotLeft;
       const frac = Math.max(0, Math.min(1, (x - vp.plotLeft) / plotWidth));
@@ -1670,7 +1675,87 @@ export function ChartCanvas({
     function handleMouseLeave() {
       smcSetTooltipRef.current(null);
     }
+
+    // ── Touch event handlers ──────────────────────────────────────────────
+    const touchState = {
+      lastX: 0,
+      lastY: 0,
+      pinchHorizDist: 0,
+      pinchVertDist: 0,
+      pinchAxis: null as "horizontal" | "vertical" | null,
+      numTouches: 0,
+    };
+
+    function getTouchDists(touches: TouchList) {
+      const t0 = touches[0];
+      const t1 = touches[1];
+      const dx = Math.abs(t1.clientX - t0.clientX);
+      const dy = Math.abs(t1.clientY - t0.clientY);
+      return { horiz: dx, vert: dy };
+    }
+
+    function handleTouchStart(e: TouchEvent) {
+      e.preventDefault();
+      touchState.numTouches = e.touches.length;
+      if (e.touches.length === 1) {
+        touchState.lastX = e.touches[0].clientX;
+        touchState.lastY = e.touches[0].clientY;
+        touchState.pinchAxis = null;
+      } else if (e.touches.length === 2) {
+        const { horiz, vert } = getTouchDists(e.touches);
+        touchState.pinchHorizDist = horiz;
+        touchState.pinchVertDist = vert;
+        touchState.pinchAxis = horiz >= vert ? "horizontal" : "vertical";
+      }
+    }
+
+    function handleTouchMove(e: TouchEvent) {
+      e.preventDefault();
+      if (e.touches.length === 1 && touchState.numTouches === 1) {
+        const dx = e.touches[0].clientX - touchState.lastX;
+        touchState.lastX = e.touches[0].clientX;
+        touchState.lastY = e.touches[0].clientY;
+        propsRef.current.onPanDelta(-dx);
+      } else if (e.touches.length === 2) {
+        const { horiz, vert } = getTouchDists(e.touches);
+        if (touchState.pinchAxis === "horizontal") {
+          const initialDist = touchState.pinchHorizDist || 1;
+          const ratio = horiz / initialDist;
+          if (ratio !== 1) {
+            // Simulate horizontal zoom via onWheel
+            const syntheticDeltaY = ratio > 1 ? -100 : 100;
+            const syntheticEvent = {
+              deltaY: syntheticDeltaY,
+              ctrlKey: false,
+            } as WheelEvent;
+            propsRef.current.onWheel(syntheticEvent, 0.5);
+          }
+          touchState.pinchHorizDist = horiz;
+          touchState.pinchVertDist = vert;
+        } else if (touchState.pinchAxis === "vertical") {
+          const deltaY = touchState.pinchVertDist - vert;
+          propsRef.current.onYAxisDrag?.(deltaY * 2);
+          touchState.pinchHorizDist = horiz;
+          touchState.pinchVertDist = vert;
+        }
+      }
+    }
+
+    function handleTouchEnd(e: TouchEvent) {
+      touchState.numTouches = e.touches.length;
+      if (e.touches.length === 0) {
+        touchState.pinchAxis = null;
+      } else if (e.touches.length === 1) {
+        touchState.lastX = e.touches[0].clientX;
+        touchState.lastY = e.touches[0].clientY;
+        touchState.pinchAxis = null;
+      }
+    }
+
     canvas.addEventListener("wheel", handleWheel, { passive: false });
+    canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
+    canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+    canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
     canvas.addEventListener("mousedown", handleMouseDown);
     canvas.addEventListener("mousemove", handleMouseMove);
     canvas.addEventListener("mouseup", handleMouseUp);
@@ -1681,6 +1766,9 @@ export function ChartCanvas({
 
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
+      canvas.removeEventListener("touchstart", handleTouchStart);
+      canvas.removeEventListener("touchmove", handleTouchMove);
+      canvas.removeEventListener("touchend", handleTouchEnd);
       canvas.removeEventListener("mousedown", handleMouseDown);
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseup", handleMouseUp);
