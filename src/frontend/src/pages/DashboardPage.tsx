@@ -39,7 +39,6 @@ import {
   SYMBOLS,
   type SymbolConfig,
   fetchLiveBinancePrices,
-  formatCurrency,
   generateCandleHistory,
   generateChartData,
   getPriceState,
@@ -50,6 +49,8 @@ import {
   type Candle,
   connectTwelveData,
   disconnectTwelveData,
+  fetchBinanceCandles,
+  fetchCandles,
   startCandlePolling,
 } from "../utils/twelveDataService";
 
@@ -59,6 +60,15 @@ const FOREX_POLLING_SYMBOLS = new Set([
   "USD/JPY",
   "XAU/USD",
 ]);
+
+const CRYPTO_SYMBOLS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
+
+/** Timeframes supported by Twelve Data free REST API */
+const TWELVE_DATA_SUPPORTED_TF = new Set(["5m", "15m"]);
+const TWELVE_DATA_TF_MAP: Record<string, "5min" | "15min"> = {
+  "5m": "5min",
+  "15m": "15min",
+};
 
 function convertTwelveDataCandles(candles: Candle[]): CandleData[] {
   return candles.map((c, index) => {
@@ -73,6 +83,51 @@ function convertTwelveDataCandles(candles: Candle[]): CandleData[] {
       index,
     };
   });
+}
+
+function convertBinanceCandles(candles: Candle[]): CandleData[] {
+  return candles.map((c, index) => {
+    const d = new Date(c.time * 1000);
+    const timeStr = `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    return {
+      time: timeStr,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      index,
+    };
+  });
+}
+
+/**
+ * Route to the appropriate data source for a given symbol + timeframe.
+ * - Crypto: Binance REST API (all timeframes)
+ * - Forex/Gold on 5m/15m: Twelve Data REST API
+ * - Everything else: simulated candle history (fallback)
+ */
+async function fetchChartCandles(
+  symbol: string,
+  tf: string,
+): Promise<CandleData[]> {
+  try {
+    if (CRYPTO_SYMBOLS.has(symbol)) {
+      const candles = await fetchBinanceCandles(symbol, tf, 60);
+      if (candles.length > 0) return convertBinanceCandles(candles);
+    } else if (
+      FOREX_POLLING_SYMBOLS.has(symbol) &&
+      TWELVE_DATA_SUPPORTED_TF.has(tf)
+    ) {
+      const interval = TWELVE_DATA_TF_MAP[tf];
+      const candles = await fetchCandles(symbol, interval, 60);
+      if (candles.length > 0) return convertTwelveDataCandles(candles);
+    }
+  } catch {
+    // fall through to simulation
+  }
+  // Fallback: simulated candle history
+  const p = getCandleParams(tf);
+  return generateCandleHistory(symbol, p.points, p.timeframeMs);
 }
 
 function getCandleParams(tf: string): { points: number; timeframeMs: number } {
@@ -156,10 +211,8 @@ export function DashboardPage() {
   const [chartData, setChartData] = useState(() =>
     generateChartData("BTC/USD"),
   );
-  const [candleData, setCandleData] = useState<CandleData[]>(() => {
-    const p = getCandleParams("1h");
-    return generateCandleHistory("BTC/USD", p.points, p.timeframeMs);
-  });
+  // Start with empty candles — real data loaded async on mount
+  const [candleData, setCandleData] = useState<CandleData[]>([]);
   const [prices, setPrices] = useState(() =>
     Object.fromEntries(SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)])),
   );
@@ -234,29 +287,42 @@ export function DashboardPage() {
     y: number;
   } | null>(null);
 
-  // --- Live Binance price fetch on mount ---
+  // --- Initial mount: seed live prices then fetch real BTC/USD 1h candles ---
   useEffect(() => {
-    fetchLiveBinancePrices().then(() => {
+    fetchLiveBinancePrices().then(async () => {
       const allPrices = Object.fromEntries(
         SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)]),
       );
       setPrices(allPrices);
-      const p = getCandleParams("1h");
       setChartData(generateChartData("BTC/USD"));
-      const history = generateCandleHistory("BTC/USD", p.points, p.timeframeMs);
-      const livePrice = allPrices["BTC/USD"]?.price ?? 0;
-      if (history.length > 0 && livePrice > 0) {
-        const last = { ...history[history.length - 1] };
-        last.open = livePrice;
-        last.close = livePrice;
-        last.high = livePrice;
-        last.low = livePrice;
-        history[history.length - 1] = last;
-        livePriceRef.current = livePrice;
+
+      const candles = await fetchChartCandles("BTC/USD", "1h");
+      if (candles.length > 0) {
+        livePriceRef.current = candles[candles.length - 1].close;
+        setCandleData(candles);
       }
-      setCandleData(history);
     });
   }, []);
+
+  // --- On symbol or timeframe change: clear stale data, fetch fresh candles ---
+  useEffect(() => {
+    // Clear immediately so the chart doesn't render stale data
+    setCandleData([]);
+    setChartData(generateChartData(selectedSymbol));
+    livePriceRef.current = 0;
+
+    let cancelled = false;
+    fetchChartCandles(selectedSymbol, timeframe).then((candles) => {
+      if (cancelled) return;
+      if (candles.length > 0) {
+        livePriceRef.current = candles[candles.length - 1].close;
+        setCandleData(candles);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSymbol, timeframe]);
 
   // Connect Twelve Data WebSocket for non-crypto symbols
   useEffect(() => {
@@ -297,32 +363,6 @@ export function DashboardPage() {
     });
     return stop;
   }, [selectedSymbol, timeframe]);
-
-  const handleSymbolOrTimeframeChange = useCallback(
-    (sym: string, tf: string) => {
-      const p = getCandleParams(tf);
-      setChartData(generateChartData(sym));
-      const history = generateCandleHistory(sym, p.points, p.timeframeMs);
-      const livePrice =
-        livePriceRef.current > 0
-          ? livePriceRef.current
-          : getPriceState(sym).price;
-      if (history.length > 0 && livePrice > 0) {
-        const last = { ...history[history.length - 1] };
-        last.open = livePrice;
-        last.close = livePrice;
-        last.high = livePrice;
-        last.low = livePrice;
-        history[history.length - 1] = last;
-      }
-      setCandleData(history);
-    },
-    [],
-  );
-
-  useEffect(() => {
-    handleSymbolOrTimeframeChange(selectedSymbol, timeframe);
-  }, [selectedSymbol, timeframe, handleSymbolOrTimeframeChange]);
 
   useEffect(() => {
     const p = getCandleParams(timeframe);
@@ -403,8 +443,7 @@ export function DashboardPage() {
   const selectedConfig: SymbolConfig =
     SYMBOLS.find((s) => s.symbol === selectedSymbol) ?? SYMBOLS[0];
   const selectedPrice = prices[selectedSymbol];
-  const CRYPTO_SYMS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
-  const priceSourceLabel = CRYPTO_SYMS.has(selectedSymbol)
+  const priceSourceLabel = CRYPTO_SYMBOLS.has(selectedSymbol)
     ? "Price: Binance"
     : "Price: Twelve Data";
 
@@ -495,19 +534,22 @@ export function DashboardPage() {
     }
   }, [optimizationSummary, pushNotification]);
 
+  // Y-axis auto-scale: use last 50 candles with 5% padding (TradingView style)
   const { priceMin, priceMax } = useMemo(() => {
     if (chartType === "candlestick" || chartType === "bar") {
-      if (candleData.length === 0) return { priceMin: 0, priceMax: 1 };
-      const low = Math.min(...candleData.map((c) => c.low));
-      const high = Math.max(...candleData.map((c) => c.high));
-      const pad = (high - low) * 0.08;
+      const slice = candleData.slice(-50);
+      if (slice.length === 0) return { priceMin: 0, priceMax: 1 };
+      const low = Math.min(...slice.map((c) => c.low));
+      const high = Math.max(...slice.map((c) => c.high));
+      const pad = (high - low) * 0.05;
       return { priceMin: low - pad, priceMax: high + pad };
     }
-    if (chartData.length === 0) return { priceMin: 0, priceMax: 1 };
-    const ps = chartData.map((d) => d.price);
+    const slice = chartData.slice(-50);
+    if (slice.length === 0) return { priceMin: 0, priceMax: 1 };
+    const ps = slice.map((d) => d.price);
     const lo = Math.min(...ps);
     const hi = Math.max(...ps);
-    const pad = (hi - lo) * 0.08;
+    const pad = (hi - lo) * 0.05;
     return { priceMin: lo - pad, priceMax: hi + pad };
   }, [chartType, candleData, chartData]);
 
