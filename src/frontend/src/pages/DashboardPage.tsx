@@ -31,6 +31,7 @@ import { tradeStore } from "../store/tradeStore";
 import type { Drawing, DrawingPoint } from "../types/drawing";
 import type { SMCVisibility } from "../types/smc";
 import type { TradeRecord } from "../types/trade";
+import { getMarketType } from "../utils/aiSignalEngine";
 import {
   type CandleData,
   SYMBOLS,
@@ -43,6 +44,10 @@ import {
   updateLiveCandle,
   updatePricesWithScale,
 } from "../utils/priceSimulator";
+import {
+  connectTwelveData,
+  disconnectTwelveData,
+} from "../utils/twelveDataService";
 
 function getCandleParams(tf: string): { points: number; timeframeMs: number } {
   switch (tf) {
@@ -227,6 +232,30 @@ export function DashboardPage() {
     });
   }, []);
 
+  // Connect Twelve Data WebSocket for non-crypto symbols
+  useEffect(() => {
+    const mt = getMarketType(selectedSymbol);
+    if (mt === "crypto") {
+      disconnectTwelveData();
+      return;
+    }
+    connectTwelveData(selectedSymbol, (livePrice) => {
+      livePriceRef.current = livePrice;
+      const config = SYMBOLS.find((s) => s.symbol === selectedSymbol);
+      if (config) {
+        setCandleData((prev) => updateLiveCandle(prev, livePrice, config));
+      }
+      setPrices((prev) => {
+        const current = prev[selectedSymbol];
+        if (!current) return prev;
+        return { ...prev, [selectedSymbol]: { ...current, price: livePrice } };
+      });
+    });
+    return () => {
+      disconnectTwelveData();
+    };
+  }, [selectedSymbol]);
+
   const handleSymbolOrTimeframeChange = useCallback(
     (sym: string, tf: string) => {
       const p = getCandleParams(tf);
@@ -383,6 +412,7 @@ export function DashboardPage() {
     timeframe,
     scalpsToday,
     positionSize,
+    getMarketType(selectedSymbol),
   );
 
   const {

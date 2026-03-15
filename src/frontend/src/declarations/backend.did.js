@@ -18,6 +18,14 @@ export const UserRole = IDL.Variant({
   'user' : IDL.Null,
   'guest' : IDL.Null,
 });
+export const AdminStats = IDL.Record({
+  'totalTrades' : IDL.Nat,
+  'premiumUsers' : IDL.Nat,
+  'platformWinRate' : IDL.Float64,
+  'freeUsers' : IDL.Nat,
+  'mostTradedSymbol' : IDL.Text,
+  'totalUsers' : IDL.Nat,
+});
 export const AiSignal = IDL.Record({
   'generatedAt' : IDL.Int,
   'signal' : IDL.Variant({
@@ -59,6 +67,7 @@ export const idlService = IDL.Service({
       [],
       [],
     ),
+  'getAdminStats' : IDL.Func([], [AdminStats], []),
   'getAiSignal' : IDL.Func([IDL.Text], [AiSignal], ['query']),
   'getCallerUserProfile' : IDL.Func([], [UserProfile], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
@@ -78,6 +87,7 @@ export const idlService = IDL.Service({
   'getUserProfile' : IDL.Func([IDL.Principal], [UserProfile], ['query']),
   'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
   'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+  'verifyAdminPin' : IDL.Func([IDL.Text], [IDL.Bool], []),
 });
 
 export const idlInitArgs = [];
@@ -92,6 +102,14 @@ export const idlFactory = ({ IDL }) => {
     'admin' : IDL.Null,
     'user' : IDL.Null,
     'guest' : IDL.Null,
+  });
+  const AdminStats = IDL.Record({
+    'totalTrades' : IDL.Nat,
+    'premiumUsers' : IDL.Nat,
+    'platformWinRate' : IDL.Float64,
+    'freeUsers' : IDL.Nat,
+    'mostTradedSymbol' : IDL.Text,
+    'totalUsers' : IDL.Nat,
   });
   const AiSignal = IDL.Record({
     'generatedAt' : IDL.Int,
@@ -138,6 +156,7 @@ export const idlFactory = ({ IDL }) => {
         [],
         [],
       ),
+    'getAdminStats' : IDL.Func([], [AdminStats], []),
     'getAiSignal' : IDL.Func([IDL.Text], [AiSignal], ['query']),
     'getCallerUserProfile' : IDL.Func([], [UserProfile], ['query']),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
@@ -157,6 +176,7 @@ export const idlFactory = ({ IDL }) => {
     'getUserProfile' : IDL.Func([IDL.Principal], [UserProfile], ['query']),
     'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
     'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+    'verifyAdminPin' : IDL.Func([IDL.Text], [IDL.Bool], []),
   });
 };
 

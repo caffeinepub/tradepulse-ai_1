@@ -2,7 +2,7 @@ export interface SymbolConfig {
   symbol: string;
   name: string;
   basePrice: number;
-  category: "crypto" | "forex" | "gold" | "indices";
+  category: "crypto" | "forex" | "gold" | "indices" | "futures" | "commodities";
   precision: number;
   volatility: number;
 }
@@ -72,7 +72,51 @@ export const SYMBOLS: SymbolConfig[] = [
     precision: 2,
     volatility: 0.003,
   },
+  {
+    symbol: "NQ1!",
+    name: "Nasdaq Futures",
+    basePrice: 19800,
+    category: "futures",
+    precision: 2,
+    volatility: 0.003,
+  },
+  {
+    symbol: "ES1!",
+    name: "S&P Futures",
+    basePrice: 5280,
+    category: "futures",
+    precision: 2,
+    volatility: 0.002,
+  },
+  {
+    symbol: "OIL/USD",
+    name: "Crude Oil",
+    basePrice: 82,
+    category: "commodities",
+    precision: 2,
+    volatility: 0.005,
+  },
+  {
+    symbol: "SILVER/USD",
+    name: "Silver",
+    basePrice: 29,
+    category: "commodities",
+    precision: 3,
+    volatility: 0.004,
+  },
 ];
+
+export const TWELVE_DATA_SYMBOL_MAP: Record<string, string> = {
+  "EUR/USD": "EUR/USD",
+  "GBP/USD": "GBP/USD",
+  "XAU/USD": "XAU/USD",
+  SPX: "SPX",
+  NDX: "NDX",
+  "NQ1!": "NQ1!",
+  "ES1!": "ES1!",
+  "OIL/USD": "WTI/USD",
+  "SILVER/USD": "XAG/USD",
+};
 
 export interface PriceState {
   price: number;

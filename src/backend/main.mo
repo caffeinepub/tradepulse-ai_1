@@ -1,4 +1,5 @@
 import Map "mo:core/Map";
+import Nat "mo:core/Nat";
 import Time "mo:core/Time";
 import Array "mo:core/Array";
 import Float "mo:core/Float";
@@ -9,7 +10,9 @@ import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
+import Migration "migration";
 
+(with migration = Migration.run)
 actor {
   // Types
   public type TradePosition = {
@@ -42,6 +45,15 @@ actor {
     balance : Float;
     openPositions : [TradePosition];
     tradeHistory : [TradePosition];
+  };
+
+  public type AdminStats = {
+    totalUsers : Nat;
+    totalTrades : Nat;
+    premiumUsers : Nat;
+    freeUsers : Nat;
+    platformWinRate : Float;
+    mostTradedSymbol : Text;
   };
 
   module MarketData {
@@ -171,6 +183,85 @@ actor {
       openEquity;
       totalTrades;
       winRate;
+    };
+  };
+
+  // Verify admin pin function
+  public shared ({ caller }) func verifyAdminPin(pin : Text) : async Bool {
+    pin == "997117";
+  };
+
+  // Admin stats function
+  public shared ({ caller }) func getAdminStats() : async AdminStats {
+    if (not AccessControl.hasPermission(accessControlState, caller, #admin)) {
+      Runtime.trap("Unauthorized: Only admins can perform this action");
+    };
+
+    // Calculate total users
+    let totalUsers = userProfiles.size();
+
+    // Calculate total trades
+    var totalTrades = 0;
+    var totalWins : Nat = 0;
+
+    userProfiles.values().forEach(
+      func(profile) {
+        totalTrades += profile.tradeHistory.size();
+        totalWins += profile.tradeHistory.filter(func(p) {
+          switch (p.profitLoss) {
+            case (?pl) { pl > 0.0 };
+            case (null) { false };
+          };
+        }).size();
+      }
+    );
+
+    // Set premium and free users to 0 for now
+    let premiumUsers = 0;
+    let freeUsers = 0;
+
+    // Calculate platform-wide win rate
+    let platformWinRate = if (totalTrades == 0) {
+      0.0;
+    } else {
+      totalWins.toFloat() / totalTrades.toFloat() * 100.0;
+    };
+
+    // Find the most traded symbol
+    let symbolCounts = Map.empty<Text, Nat>();
+
+    userProfiles.values().forEach(
+      func(profile) {
+        profile.tradeHistory.forEach(
+          func(trade) {
+            let currentCount = switch (symbolCounts.get(trade.symbol)) {
+              case (?count) { count };
+              case (null) { 0 };
+            };
+            symbolCounts.add(trade.symbol, currentCount + 1);
+          }
+        );
+      }
+    );
+
+    let mostTradedSymbol = switch (symbolCounts.toArray()) {
+      case (counts) {
+        let (maxSymbol, _) = counts.foldLeft(("", 0), func(acc, current) {
+          let (_, accCount) = acc;
+          let (_, currentCount) = current;
+          if (currentCount > accCount) { current } else { acc };
+        });
+        maxSymbol;
+      };
+    };
+
+    {
+      totalUsers;
+      totalTrades;
+      premiumUsers;
+      freeUsers;
+      platformWinRate;
+      mostTradedSymbol;
     };
   };
 

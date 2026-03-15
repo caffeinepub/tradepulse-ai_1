@@ -10,6 +10,14 @@ import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 import type { Principal } from '@icp-sdk/core/principal';
 
+export interface AdminStats {
+  'totalTrades' : bigint,
+  'premiumUsers' : bigint,
+  'platformWinRate' : number,
+  'freeUsers' : bigint,
+  'mostTradedSymbol' : string,
+  'totalUsers' : bigint,
+}
 export interface AiSignal {
   'generatedAt' : bigint,
   'signal' : { 'buy' : null } |
@@ -52,6 +60,7 @@ export interface _SERVICE {
     [string, { 'buy' : null } | { 'hold' : null } | { 'sell' : null }, number],
     undefined
   >,
+  'getAdminStats' : ActorMethod<[], AdminStats>,
   'getAiSignal' : ActorMethod<[string], AiSignal>,
   'getCallerUserProfile' : ActorMethod<[], UserProfile>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
@@ -68,6 +77,7 @@ export interface _SERVICE {
   'getUserProfile' : ActorMethod<[Principal], UserProfile>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'verifyAdminPin' : ActorMethod<[string], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

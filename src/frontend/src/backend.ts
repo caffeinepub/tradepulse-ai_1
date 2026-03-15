@@ -105,6 +105,14 @@ export interface AiSignal {
     confidence: number;
     symbol: string;
 }
+export interface AdminStats {
+    totalTrades: bigint;
+    premiumUsers: bigint;
+    platformWinRate: number;
+    freeUsers: bigint;
+    mostTradedSymbol: string;
+    totalUsers: bigint;
+}
 export interface UserProfile {
     balance: number;
     displayName: string;
@@ -136,6 +144,7 @@ export interface backendInterface {
     addMarketData(data: MarketData): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
     generateAiSignal(symbol: string, signal: Variant_buy_hold_sell, confidence: number): Promise<void>;
+    getAdminStats(): Promise<AdminStats>;
     getAiSignal(symbol: string): Promise<AiSignal>;
     getCallerUserProfile(): Promise<UserProfile>;
     getCallerUserRole(): Promise<UserRole>;
@@ -149,6 +158,7 @@ export interface backendInterface {
     getUserProfile(user: Principal): Promise<UserProfile>;
     isCallerAdmin(): Promise<boolean>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    verifyAdminPin(pin: string): Promise<boolean>;
 }
 import type { AiSignal as _AiSignal, TradePosition as _TradePosition, UserProfile as _UserProfile, UserRole as _UserRole } from "./declarations/backend.did.d.ts";
 export class Backend implements backendInterface {
@@ -206,6 +216,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.generateAiSignal(arg0, to_candid_variant_n3(this._uploadFile, this._downloadFile, arg1), arg2);
+            return result;
+        }
+    }
+    async getAdminStats(): Promise<AdminStats> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getAdminStats();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getAdminStats();
             return result;
         }
     }
@@ -323,6 +347,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.saveCallerUserProfile(to_candid_UserProfile_n17(this._uploadFile, this._downloadFile, arg0));
+            return result;
+        }
+    }
+    async verifyAdminPin(arg0: string): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.verifyAdminPin(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.verifyAdminPin(arg0);
             return result;
         }
     }

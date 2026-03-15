@@ -11,6 +11,8 @@ import { useEffect } from "react";
 import { Navbar } from "./components/Navbar";
 import { TickerBar } from "./components/TickerBar";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
+import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { AdminLoginPage } from "./pages/AdminLoginPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HomePage } from "./pages/HomePage";
@@ -26,6 +28,14 @@ function RootLayout() {
       </div>
       <Toaster />
     </div>
+  );
+}
+
+function AdminRootLayout() {
+  return (
+    <>
+      <Outlet />
+    </>
   );
 }
 
@@ -80,6 +90,23 @@ const analyticsRoute = createRoute({
   ),
 });
 
+// Admin routes — isolated root with no Navbar/TickerBar
+const adminRootRoute = createRootRoute({
+  component: AdminRootLayout,
+});
+
+const adminLoginRoute = createRoute({
+  getParentRoute: () => adminRootRoute,
+  path: "/admin",
+  component: AdminLoginPage,
+});
+
+const adminDashboardRoute = createRoute({
+  getParentRoute: () => adminRootRoute,
+  path: "/admin/dashboard",
+  component: AdminDashboardPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   dashboardRoute,
@@ -87,7 +114,13 @@ const routeTree = rootRoute.addChildren([
   analyticsRoute,
 ]);
 
+const adminRouteTree = adminRootRoute.addChildren([
+  adminLoginRoute,
+  adminDashboardRoute,
+]);
+
 const router = createRouter({ routeTree });
+const adminRouter = createRouter({ routeTree: adminRouteTree });
 
 declare module "@tanstack/react-router" {
   interface Register {
@@ -95,6 +128,13 @@ declare module "@tanstack/react-router" {
   }
 }
 
+function isAdminPath() {
+  return window.location.pathname.startsWith("/admin");
+}
+
 export default function App() {
+  if (isAdminPath()) {
+    return <RouterProvider router={adminRouter} />;
+  }
   return <RouterProvider router={router} />;
 }

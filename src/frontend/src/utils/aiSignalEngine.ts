@@ -155,6 +155,92 @@ export function getContextualHoldMessage(
   return "Scanning for setup...";
 }
 
+// ── Market-type helpers ──────────────────────────────────────────
+
+export type MarketType =
+  | "crypto"
+  | "forex"
+  | "indices"
+  | "futures"
+  | "commodities"
+  | "gold";
+
+export function getMarketType(symbol: string): MarketType {
+  if (["BTC/USD", "ETH/USD", "SOL/USD"].includes(symbol)) return "crypto";
+  if (["EUR/USD", "GBP/USD"].includes(symbol)) return "forex";
+  if (["SPX", "NDX"].includes(symbol)) return "indices";
+  if (["NQ1!", "ES1!"].includes(symbol)) return "futures";
+  if (["OIL/USD", "SILVER/USD"].includes(symbol)) return "commodities";
+  if (symbol === "XAU/USD") return "gold";
+  return "crypto";
+}
+
+/** Returns true if the current UTC time is within London (07:00-16:00) or NY (12:00-21:00) sessions */
+function isForexSessionActive(): boolean {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const inLondon = utcHour >= 7 && utcHour < 16;
+  const inNewYork = utcHour >= 12 && utcHour < 21;
+  return inLondon || inNewYork;
+}
+
+/** Returns true if within 1 hour of major session opens (NYSE 13:30 UTC, LSE 08:00 UTC) */
+function isNearSessionOpen(): boolean {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcMin = now.getUTCMinutes();
+  const totalMin = utcHour * 60 + utcMin;
+  // LSE open: 08:00 UTC ± 60 min = 420-540
+  const nearLSE = totalMin >= 420 && totalMin <= 540;
+  // NYSE open: 13:30 UTC ± 60 min = 750-870
+  const nearNYSE = totalMin >= 750 && totalMin <= 870;
+  return nearLSE || nearNYSE;
+}
+
+function buildHoldSignal(
+  symbol: string,
+  price: number,
+  vol: number,
+  lotSize: number,
+  selectedTimeframe?: string,
+  positionSize?: number,
+  reason?: string,
+): AISignal {
+  const atr = price * Math.max(vol, 0.002);
+  const tradeType: AISignal["tradeType"] =
+    selectedTimeframe === "1m" || selectedTimeframe === "5m"
+      ? "Scalp"
+      : selectedTimeframe === "15m" || selectedTimeframe === "30m"
+        ? "Intraday"
+        : selectedTimeframe === "1h" || selectedTimeframe === "4h"
+          ? "Swing"
+          : "Position";
+  return {
+    id: `${symbol}-hold-${Date.now()}`,
+    asset: symbol,
+    signal: "HOLD",
+    entryPrice: price,
+    stopLoss: price - atr,
+    tp1: price + atr,
+    tp2: price + atr * 1.5,
+    tp3: price + atr * 2,
+    riskReward: 1.5,
+    confidence: 40,
+    confidenceBreakdown: {
+      trendAlignment: 10,
+      indicatorConfluence: 10,
+      volumeConfirmation: 10,
+      structureSignals: 10,
+    },
+    trend: "Sideways",
+    tradeType,
+    confirmationReason: reason ?? "Scanning for setup...",
+    expectedDuration: "—",
+    positionSize: positionSize ?? lotSize,
+    timestamp: new Date(),
+  };
+}
+
 export function generateSignal(
   symbol: string,
   price: number,
@@ -166,6 +252,7 @@ export function generateSignal(
   selectedTimeframe?: string,
   scalpsToday?: number,
   positionSize?: number,
+  marketType?: MarketType,
 ): AISignal {
   const prices = chartData.map((d) => d.price);
   const lotSize = positionSize ?? 0.05;
@@ -187,6 +274,37 @@ export function generateSignal(
 
   const rsiValue = rsi(prices, 14);
   const macdResult = macd(prices);
+
+  // ── Market-specific gates ────────────────────────────────────────
+
+  const resolvedMarketType = marketType ?? getMarketType(symbol);
+
+  // Forex: only trade during active London / NY sessions
+  if (resolvedMarketType === "forex" && !isForexSessionActive()) {
+    return buildHoldSignal(
+      symbol,
+      price,
+      vol,
+      lotSize,
+      selectedTimeframe,
+      positionSize,
+      "Outside active trading session (London/NY)",
+    );
+  }
+
+  // Commodities: require minimum volatility before trading
+  const COMMODITY_VOL_THRESHOLD = 0.003;
+  if (resolvedMarketType === "commodities" && vol < COMMODITY_VOL_THRESHOLD) {
+    return buildHoldSignal(
+      symbol,
+      price,
+      vol,
+      lotSize,
+      selectedTimeframe,
+      positionSize,
+      "Insufficient volatility for commodity trade",
+    );
+  }
 
   let signalType: "BUY" | "SELL" | "HOLD";
   if (shortEMA > longEMA && momentum > 0.1) {
@@ -338,6 +456,20 @@ export function generateSignal(
         95,
         confidence + Math.round((sentimentStrength - 70) * 0.27),
       );
+    }
+  }
+
+  // Indices & Futures: boost confidence near session open; require ATR trend strength
+  if (resolvedMarketType === "indices" || resolvedMarketType === "futures") {
+    if (isNearSessionOpen()) {
+      confidence = Math.min(95, confidence + 7);
+    }
+    // Require a minimum trend strength (ATR-based) — if vol is very low, reduce confidence
+    if (vol < 0.001) {
+      confidence = Math.round(confidence * 0.85);
+      if (confidence < 55 && (signalType === "BUY" || signalType === "SELL")) {
+        signalType = "HOLD";
+      }
     }
   }
 

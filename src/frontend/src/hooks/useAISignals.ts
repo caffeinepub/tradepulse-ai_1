@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FactorWeights, SMCSignalContext } from "../types/smc";
 import {
   type AISignal,
+  type MarketType,
   generateSignal,
   getSignalTimeout,
 } from "../utils/aiSignalEngine";
@@ -26,6 +27,7 @@ export function useAISignals(
   selectedTimeframe?: string,
   scalpsToday?: number,
   positionSize?: number,
+  marketType?: MarketType,
 ): {
   currentSignal: AISignal | null;
   history: AISignal[];
@@ -49,6 +51,7 @@ export function useAISignals(
   const timeframeRef = useRef(selectedTimeframe);
   const scalpsTodayRef = useRef(scalpsToday);
   const positionSizeRef = useRef(positionSize);
+  const marketTypeRef = useRef(marketType);
 
   analysisRef.current = analysis;
   mtfRef.current = mtf;
@@ -58,6 +61,7 @@ export function useAISignals(
   timeframeRef.current = selectedTimeframe;
   scalpsTodayRef.current = scalpsToday;
   positionSizeRef.current = positionSize;
+  marketTypeRef.current = marketType;
 
   useEffect(() => {
     if (prevSymbolRef.current !== symbol) {
@@ -87,6 +91,7 @@ export function useAISignals(
         timeframeRef.current,
         scalpsTodayRef.current,
         positionSizeRef.current,
+        marketTypeRef.current,
       );
 
       // Apply SMC context adjustments

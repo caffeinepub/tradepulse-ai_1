@@ -23,6 +23,14 @@ export interface AiSignal {
     confidence: number;
     symbol: string;
 }
+export interface AdminStats {
+    totalTrades: bigint;
+    premiumUsers: bigint;
+    platformWinRate: number;
+    freeUsers: bigint;
+    mostTradedSymbol: string;
+    totalUsers: bigint;
+}
 export interface UserProfile {
     balance: number;
     displayName: string;
@@ -53,6 +61,7 @@ export interface backendInterface {
     addMarketData(data: MarketData): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
     generateAiSignal(symbol: string, signal: Variant_buy_hold_sell, confidence: number): Promise<void>;
+    getAdminStats(): Promise<AdminStats>;
     getAiSignal(symbol: string): Promise<AiSignal>;
     getCallerUserProfile(): Promise<UserProfile>;
     getCallerUserRole(): Promise<UserRole>;
@@ -66,4 +75,5 @@ export interface backendInterface {
     getUserProfile(user: Principal): Promise<UserProfile>;
     isCallerAdmin(): Promise<boolean>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    verifyAdminPin(pin: string): Promise<boolean>;
 }

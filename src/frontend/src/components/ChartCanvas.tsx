@@ -1239,7 +1239,7 @@ export function ChartCanvas({
       renderDrawing(ctx, p.drawingInProgress, vp, false, true);
     }
 
-    // ── Live Price Line (right-side only, TradingView style) ────────────
+    // ── TradingView-style solid live price bar ──────────────────────
     const liveP = p.livePrice;
     if (liveP !== undefined && liveP > 0) {
       const ly = mapY(liveP, pMin, pMax, PT, PB);
@@ -1247,37 +1247,48 @@ export function ChartCanvas({
         visibleCandles.length > 0
           ? visibleCandles[visibleCandles.length - 1]
           : null;
-      const prevClose = lastCandle?.close ?? liveP;
-      const lineColor = liveP >= prevClose ? "#26a69a" : "#ef5350";
+      const currentCandleOpen = lastCandle?.open ?? liveP;
+      const barColor = liveP >= currentCandleOpen ? "#22c55e" : "#ef4444";
 
       ctx.save();
 
-      // Dashed line spanning from plot left edge to right panel boundary (W)
-      ctx.strokeStyle = lineColor;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
+      // Solid horizontal line across the full chart area (PL to PR)
+      ctx.strokeStyle = barColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]); // solid line
+      ctx.globalAlpha = 0.9;
       ctx.beginPath();
       ctx.moveTo(PL, ly);
-      ctx.lineTo(W, ly);
+      ctx.lineTo(PR, ly);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Price label box starts at PR + 2 (right Y-axis panel only)
+      // Price label box on the right Y-axis panel
       const prec2 = sc.precision;
       const labelText = liveP.toFixed(prec2);
-      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.font = 'bold 11px "JetBrains Mono", monospace';
       const textW = ctx.measureText(labelText).width;
-      const labelPad = 4;
-      const boxW = textW + labelPad * 2;
-      const boxH = 16;
+      const labelPadX = 6;
+      const _labelPadY = 3;
+      const labelW = textW + labelPadX * 2;
+      const labelH = 16;
       const boxX = PR + 2;
-      const boxY = ly - boxH / 2;
+      const boxY = ly - labelH / 2;
 
-      ctx.fillStyle = lineColor;
-      ctx.fillRect(boxX, boxY, boxW, boxH);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = barColor;
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(boxX, boxY, labelW, labelH, 3);
+      } else {
+        ctx.rect(boxX, boxY, labelW, labelH);
+      }
+      ctx.fill();
       ctx.fillStyle = "#ffffff";
       ctx.textAlign = "left";
-      ctx.fillText(labelText, boxX + labelPad, ly + 4);
+      ctx.textBaseline = "middle";
+      ctx.fillText(labelText, boxX + labelPadX, ly);
+      ctx.textBaseline = "alphabetic";
 
       // ── Candle Countdown Timer (just below the price label) ──
       const secs = p.secondsRemaining;
@@ -1301,9 +1312,9 @@ export function ChartCanvas({
           timerText = `${hh}:${mm2}`;
         }
         ctx.font = '9px "JetBrains Mono", monospace';
-        ctx.fillStyle = lineColor;
+        ctx.fillStyle = barColor;
         ctx.textAlign = "left";
-        ctx.fillText(timerText, boxX, boxY + boxH + 12);
+        ctx.fillText(timerText, boxX, ly + labelH / 2 + 14);
       }
 
       ctx.restore();
