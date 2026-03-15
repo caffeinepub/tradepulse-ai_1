@@ -41,18 +41,59 @@ const CRYPTO_TF_TO_BINANCE: Record<string, string> = {
 };
 
 // Pair sets for routing to different data sources
-const CRYPTO_PAIRS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
-const FOREX_PAIRS = new Set(["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]);
+const CRYPTO_PAIRS = new Set([
+  "BTC/USD",
+  "ETH/USD",
+  "SOL/USD",
+  "BNB/USD",
+  "XRP/USD",
+  "ADA/USD",
+  "DOGE/USD",
+  "AVAX/USD",
+  "MATIC/USD",
+  "DOT/USD",
+]);
+const FOREX_PAIRS = new Set([
+  "EUR/USD",
+  "GBP/USD",
+  "USD/JPY",
+  "XAU/USD",
+  "USD/CHF",
+  "AUD/USD",
+  "NZD/USD",
+  "USD/CAD",
+  "GBP/JPY",
+  "EUR/JPY",
+  "EUR/GBP",
+  "XAG/USD",
+  "WTI/USD",
+]);
 
 // Supported pairs for real candle data (both crypto and forex)
 export const SUPPORTED_PAIRS = [
   "BTC/USD",
   "ETH/USD",
   "SOL/USD",
+  "BNB/USD",
+  "XRP/USD",
+  "ADA/USD",
+  "DOGE/USD",
+  "AVAX/USD",
+  "MATIC/USD",
+  "DOT/USD",
   "EUR/USD",
   "GBP/USD",
   "USD/JPY",
   "XAU/USD",
+  "USD/CHF",
+  "AUD/USD",
+  "NZD/USD",
+  "USD/CAD",
+  "GBP/JPY",
+  "EUR/JPY",
+  "EUR/GBP",
+  "XAG/USD",
+  "WTI/USD",
 ];
 
 export function normalizeTimeframeLabel(tf: string): string {

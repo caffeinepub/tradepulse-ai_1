@@ -4,7 +4,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -17,34 +16,22 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useSignalLock } from "../hooks/useSignalLock";
 import type { UnifiedSignal } from "../utils/unifiedSignalEngine";
+import { LockedSignalCard } from "./LockedSignalCard";
 
 interface SignalsPanelProps {
   currentSignal: UnifiedSignal | null;
   history: UnifiedSignal[];
   symbol: string;
-}
-
-function TradeTypeBadge({ type }: { type: UnifiedSignal["tradeType"] }) {
-  const map: Record<string, string> = {
-    Intraday: "bg-blue-500/15 border-blue-500/40 text-blue-400",
-    Swing: "bg-purple-500/15 border-purple-500/40 text-purple-400",
-  };
-  return (
-    <Badge
-      variant="outline"
-      className={`text-[9px] px-1.5 py-0 border ${map[type] ?? ""}`}
-    >
-      {type}
-    </Badge>
-  );
+  currentPrice?: number;
 }
 
 function SignalBadge({ signal }: { signal: UnifiedSignal["signal"] }) {
   const classes =
-    signal === "BUY"
+    signal === "BUY" || signal === "STRONG BUY"
       ? "bg-buy border-buy text-buy font-bold"
-      : signal === "SELL"
+      : signal === "SELL" || signal === "STRONG SELL"
         ? "bg-sell border-sell text-sell font-bold"
         : "bg-muted border-border text-muted-foreground font-bold";
   return (
@@ -73,19 +60,6 @@ function formatPrice(value: number): string {
   return value.toFixed(5);
 }
 
-function useSecondsAgo(timestamp: Date | null): number {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!timestamp) return;
-    const update = () =>
-      setSeconds(Math.floor((Date.now() - timestamp.getTime()) / 1000));
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, [timestamp]);
-  return seconds;
-}
-
 function playBeep(freq = 880, duration = 0.15) {
   try {
     const ctx = new AudioContext();
@@ -99,41 +73,36 @@ function playBeep(freq = 880, duration = 0.15) {
     osc.start();
     osc.stop(ctx.currentTime + duration);
     osc.onended = () => ctx.close();
-  } catch (_) {
-    // Audio context not available
-  }
+  } catch (_) {}
 }
 
 export function SignalsPanel({
   currentSignal,
   history,
   symbol,
+  currentPrice = 0,
 }: SignalsPanelProps) {
-  const secondsAgo = useSecondsAgo(currentSignal?.timestamp ?? null);
-  const prevSignalIdRef = useRef<string | null>(null);
-  const [flashBorder, setFlashBorder] = useState(false);
+  const { lockedState, progressPercent, pips, signalAgeMs, clearLock } =
+    useSignalLock({ currentSignal, currentPrice, symbol });
+
+  const prevLockIdRef = useRef<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [notifDot, setNotifDot] = useState(false);
+  const [flashBorder, setFlashBorder] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const isHoldOrNull = !currentSignal || currentSignal.signal === "HOLD";
-
   const holdReason =
     currentSignal?.holdReason ??
     currentSignal?.reason ??
     "Scanning for setup...";
 
-  // Alert system: detect new signals
+  // Alert when a new signal gets locked
   useEffect(() => {
-    if (!currentSignal) return;
-    if (currentSignal.id === prevSignalIdRef.current) return;
-    if (currentSignal.signal === "HOLD") {
-      prevSignalIdRef.current = currentSignal.id;
-      return;
-    }
-    const isNew = prevSignalIdRef.current !== null;
-    prevSignalIdRef.current = currentSignal.id;
-    if (!isNew) return;
+    if (!lockedState) return;
+    const lockId = lockedState.signal.id;
+    if (lockId === prevLockIdRef.current) return;
+    prevLockIdRef.current = lockId;
     if (soundEnabled) {
       playBeep(660, 0.1);
       setTimeout(() => playBeep(880, 0.15), 180);
@@ -142,7 +111,7 @@ export function SignalsPanel({
     setFlashBorder(true);
     setTimeout(() => setFlashBorder(false), 1200);
     setTimeout(() => setNotifDot(false), 4000);
-  }, [currentSignal, soundEnabled]);
+  }, [lockedState, soundEnabled]);
 
   return (
     <div
@@ -151,20 +120,17 @@ export function SignalsPanel({
         flashBorder ? "ring-2 ring-amber-400/60" : ""
       }`}
     >
-      {/* Live Signal Header */}
+      {/* Header */}
       <div className="px-3 pt-3 pb-2 shrink-0">
         <div className="flex items-center gap-2 mb-2">
           <span
             className={`w-2 h-2 rounded-full shrink-0 ${
-              isHoldOrNull
-                ? "bg-amber-400 animate-pulse"
-                : "bg-buy animate-pulse"
+              lockedState?.status === "ACTIVE"
+                ? "bg-emerald-400 animate-pulse"
+                : isHoldOrNull
+                  ? "bg-amber-400 animate-pulse"
+                  : "bg-muted-foreground"
             }`}
-            style={{
-              boxShadow: isHoldOrNull
-                ? "0 0 6px oklch(0.82 0.18 85 / 0.7)"
-                : "0 0 6px oklch(0.72 0.18 145 / 0.7)",
-            }}
           />
           <span className="text-[10px] font-semibold text-muted-foreground tracking-widest uppercase">
             Live Signal
@@ -190,8 +156,18 @@ export function SignalsPanel({
           </button>
         </div>
 
-        {/* HOLD State */}
-        {isHoldOrNull ? (
+        {/* Locked signal card (ACTIVE or CLOSED) */}
+        {lockedState ? (
+          <LockedSignalCard
+            lockedState={lockedState}
+            currentPrice={currentPrice}
+            progressPercent={progressPercent}
+            pips={pips}
+            signalAgeMs={signalAgeMs}
+            onDismiss={lockedState.status !== "ACTIVE" ? clearLock : undefined}
+          />
+        ) : (
+          /* HOLD State — no locked signal */
           <div
             data-ocid="signals.hold_card"
             className="rounded p-3 terminal-border border-l-2 border-l-amber-500/40"
@@ -225,141 +201,6 @@ export function SignalsPanel({
                 {symbol}
               </span>
             </p>
-          </div>
-        ) : (
-          /* BUY/SELL State */
-          <div
-            data-ocid="signals.live_card"
-            className={`rounded p-2.5 terminal-border ${
-              currentSignal.signal === "BUY"
-                ? "border-l-2 border-l-buy/60"
-                : "border-l-2 border-l-sell/60"
-            }`}
-          >
-            {/* Signal + Trade Type */}
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`font-display font-bold text-lg leading-none ${
-                    currentSignal.signal === "BUY" ? "text-buy" : "text-sell"
-                  }`}
-                >
-                  {currentSignal.signal}
-                </span>
-                {currentSignal.timeframe && currentSignal.timeframe !== "—" && (
-                  <span className="text-[9px] font-mono font-semibold text-muted-foreground/70 tracking-wide">
-                    — {currentSignal.timeframe}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                <TradeTypeBadge type={currentSignal.tradeType} />
-                <Badge
-                  variant="outline"
-                  className="text-[9px] border-border text-muted-foreground/60 px-1.5 py-0"
-                >
-                  {currentSignal.expectedDuration}
-                </Badge>
-              </div>
-            </div>
-
-            {/* Confidence bar */}
-            <div className="mb-2">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[9px] text-muted-foreground">
-                  Confidence
-                </span>
-                <span
-                  className={`font-mono text-[10px] font-semibold ${
-                    currentSignal.confidence >= 85
-                      ? "text-buy"
-                      : currentSignal.confidence >= 70
-                        ? "text-foreground"
-                        : "text-sell"
-                  }`}
-                >
-                  {currentSignal.confidence}%
-                </span>
-              </div>
-              <Progress
-                value={currentSignal.confidence}
-                className="h-1.5"
-                style={{ background: "oklch(0.16 0.012 240)" }}
-              />
-            </div>
-
-            {/* Trend */}
-            <div className="flex items-center gap-1 mb-2">
-              <TrendIcon trend={currentSignal.trend} />
-              <span
-                className={`text-[10px] font-semibold ${
-                  currentSignal.trend === "Bullish"
-                    ? "text-buy"
-                    : currentSignal.trend === "Bearish"
-                      ? "text-sell"
-                      : "text-muted-foreground"
-                }`}
-              >
-                {currentSignal.trend}
-              </span>
-            </div>
-
-            {/* Price levels */}
-            <div
-              className="grid gap-x-3 gap-y-1 text-[10px] mb-2"
-              style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
-            >
-              <div>
-                <div className="text-muted-foreground">Entry</div>
-                <div className="font-mono text-cyan-400 font-medium">
-                  {formatPrice(currentSignal.entryPrice)}
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Stop Loss</div>
-                <div className="font-mono text-sell font-medium">
-                  {formatPrice(currentSignal.stopLoss)}
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">TP1</div>
-                <div className="font-mono text-buy font-medium">
-                  {formatPrice(currentSignal.tp1)}
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">TP2</div>
-                <div className="font-mono text-buy font-medium">
-                  {formatPrice(currentSignal.tp2)}
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">R:R</div>
-                <div className="font-mono text-foreground font-medium">
-                  1:{currentSignal.riskReward.toFixed(2)}
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Lot Size</div>
-                <div className="font-mono text-foreground font-medium">
-                  {currentSignal.lotSize.toFixed(2)}
-                </div>
-              </div>
-            </div>
-
-            {/* Reason */}
-            {currentSignal.reason && (
-              <div className="mt-2 text-[9px] text-muted-foreground/70 italic leading-tight border-t border-border/30 pt-1.5">
-                {currentSignal.reason}
-              </div>
-            )}
-
-            {/* Updated row */}
-            <div className="mt-1.5 flex items-center justify-between">
-              <span className="text-[9px] text-muted-foreground">
-                Updated {secondsAgo}s ago
-              </span>
-            </div>
           </div>
         )}
       </div>
@@ -435,8 +276,7 @@ export function SignalsPanel({
                           >
                             {sig.trend}
                           </span>
-                          <span className="text-muted-foreground">·</span>
-                          <TradeTypeBadge type={sig.tradeType} />
+                          <TrendIcon trend={sig.trend} />
                         </div>
                       </div>
                       <div className="flex items-center justify-between font-mono">

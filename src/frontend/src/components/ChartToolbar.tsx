@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { SMCVisibility } from "../types/smc";
 import type { ChartType } from "./ChartCanvas";
+import { PairSelectorDropdown } from "./PairSelectorDropdown";
 
 const TIMEFRAMES = [
   { key: "1m", label: "1m" },
@@ -48,6 +49,7 @@ interface ChartToolbarProps {
   showDrawingToolbar: boolean;
   onToggleDrawingToolbar: () => void;
   priceSource?: string;
+  onSymbolSelect?: (symbol: string) => void;
 }
 
 export function ChartToolbar({
@@ -63,15 +65,19 @@ export function ChartToolbar({
   showDrawingToolbar,
   onToggleDrawingToolbar,
   priceSource,
+  onSymbolSelect,
 }: ChartToolbarProps) {
   return (
     <div
       className="flex items-center gap-1 px-2 border-b border-border bg-background shrink-0 overflow-x-auto"
       style={{ height: 38 }}
     >
-      {/* Symbol label + price source badge */}
+      {/* Symbol selector + price source badge */}
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-xs font-bold text-foreground">{symbol}</span>
+        <PairSelectorDropdown
+          selectedSymbol={symbol}
+          onSymbolSelect={onSymbolSelect ?? (() => {})}
+        />
         {priceSource && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded font-mono shrink-0"

@@ -8,7 +8,18 @@ import { TWELVE_DATA_API_KEY } from "../marketConfig";
 import { SYMBOLS, TWELVE_DATA_SYMBOL_MAP, priceStates } from "./priceSimulator";
 
 // Crypto symbols are handled by Binance WebSocket, not Twelve Data
-const CRYPTO_SYMBOLS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
+const CRYPTO_SYMBOLS = new Set([
+  "BTC/USD",
+  "ETH/USD",
+  "SOL/USD",
+  "BNB/USD",
+  "XRP/USD",
+  "ADA/USD",
+  "DOGE/USD",
+  "AVAX/USD",
+  "MATIC/USD",
+  "DOT/USD",
+]);
 
 let ws: WebSocket | null = null;
 let activeSymbol: string | null = null;
@@ -134,6 +145,16 @@ const FOREX_SYMBOL_MAP: Record<string, string> = {
   "GBP/USD": "GBP/USD",
   "USD/JPY": "USD/JPY",
   "XAU/USD": "XAU/USD",
+  // New forex pairs
+  "USD/CHF": "USD/CHF",
+  "AUD/USD": "AUD/USD",
+  "NZD/USD": "NZD/USD",
+  "USD/CAD": "USD/CAD",
+  "GBP/JPY": "GBP/JPY",
+  "EUR/JPY": "EUR/JPY",
+  "EUR/GBP": "EUR/GBP",
+  "XAG/USD": "XAG/USD",
+  "WTI/USD": "WTI/USD",
 };
 
 /** Fetch real OHLC candles from Twelve Data REST API */
@@ -209,6 +230,14 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
   "BTC/USD": "BTCUSDT",
   "ETH/USD": "ETHUSDT",
   "SOL/USD": "SOLUSDT",
+  // New crypto pairs
+  "BNB/USD": "BNBUSDT",
+  "XRP/USD": "XRPUSDT",
+  "ADA/USD": "ADAUSDT",
+  "DOGE/USD": "DOGEUSDT",
+  "AVAX/USD": "AVAXUSDT",
+  "MATIC/USD": "MATICUSDT",
+  "DOT/USD": "DOTUSDT",
 };
 
 const BINANCE_INTERVAL_MAP: Record<string, string> = {
@@ -251,7 +280,7 @@ export async function fetchBinanceCandles(
   }
 }
 
-/** Fetch live BTC/ETH/SOL price from Binance REST API */
+/** Fetch live crypto price from Binance REST API */
 export async function fetchBinanceLivePrice(symbol: string): Promise<number> {
   const binanceSymbol = BINANCE_SYMBOL_MAP[symbol];
   if (!binanceSymbol) return 0;

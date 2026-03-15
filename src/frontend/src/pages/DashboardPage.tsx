@@ -59,9 +59,29 @@ const FOREX_POLLING_SYMBOLS = new Set([
   "GBP/USD",
   "USD/JPY",
   "XAU/USD",
+  "USD/CHF",
+  "AUD/USD",
+  "NZD/USD",
+  "USD/CAD",
+  "GBP/JPY",
+  "EUR/JPY",
+  "EUR/GBP",
+  "XAG/USD",
+  "WTI/USD",
 ]);
 
-const CRYPTO_SYMBOLS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
+const CRYPTO_SYMBOLS = new Set([
+  "BTC/USD",
+  "ETH/USD",
+  "SOL/USD",
+  "BNB/USD",
+  "XRP/USD",
+  "ADA/USD",
+  "DOGE/USD",
+  "AVAX/USD",
+  "MATIC/USD",
+  "DOT/USD",
+]);
 
 /** Timeframes supported by Twelve Data free REST API */
 const TWELVE_DATA_SUPPORTED_TF = new Set(["5m", "15m"]);
@@ -774,11 +794,14 @@ export function DashboardPage() {
         currentSignal={currentSignal}
         history={signalHistory}
         symbol={selectedSymbol}
+        currentPrice={selectedPrice?.price ?? 0}
       />
       <IntraSignalPanel
         currentSignal={currentSignal}
         history={signalHistory}
         selectedTimeframe={timeframe}
+        currentPrice={selectedPrice?.price ?? 0}
+        symbol={selectedSymbol}
       />
       <OpenTradePanel
         positions={positions}
@@ -872,6 +895,7 @@ export function DashboardPage() {
             showDrawingToolbar={showDrawingToolbar}
             onToggleDrawingToolbar={() => setShowDrawingToolbar((v) => !v)}
             priceSource={priceSourceLabel}
+            onSymbolSelect={setSelectedSymbol}
           />
           {dailyLossLimitHit && (
             <div
