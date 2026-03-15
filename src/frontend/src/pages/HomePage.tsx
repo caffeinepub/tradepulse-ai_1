@@ -4,14 +4,16 @@ import { Link } from "@tanstack/react-router";
 import {
   ArrowRight,
   Brain,
-  ChevronRight,
   Globe,
+  LayoutDashboard,
+  LogIn,
   Shield,
   TrendingUp,
   Zap,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import { SYMBOLS, getPriceState, updatePrices } from "../utils/priceSimulator";
 
 const MARKET_SYMBOLS = ["BTC/USD", "ETH/USD", "XAU/USD", "EUR/USD"];
@@ -44,6 +46,9 @@ const FEATURES = [
 ];
 
 export function HomePage() {
+  const { identity, login } = useInternetIdentity();
+  const isAuthed = !!identity;
+
   const [marketData, setMarketData] = useState(() =>
     MARKET_SYMBOLS.map((s) => ({
       ...SYMBOLS.find((x) => x.symbol === s)!,
@@ -91,7 +96,7 @@ export function HomePage() {
           transition={{ duration: 0.7 }}
           className="relative z-10 max-w-3xl mx-auto"
         >
-          <Badge className="mb-6 bg-primary/10 border border-primary/30 text-buy font-mono-num text-xs px-3 py-1">
+          <Badge className="mb-6 bg-primary/10 border border-primary/30 text-buy font-mono text-xs px-3 py-1">
             <span className="animate-pulse-green mr-1.5 inline-block w-1.5 h-1.5 rounded-full bg-buy" />
             LIVE — AI Signals Active
           </Badge>
@@ -109,27 +114,29 @@ export function HomePage() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link to="/register">
+            {isAuthed ? (
+              <Link to="/dashboard">
+                <Button
+                  size="lg"
+                  data-ocid="hero.go_to_dashboard_button"
+                  className="bg-primary/20 border border-primary/50 text-buy hover:bg-primary/30 glow-buy font-semibold gap-2 w-full sm:w-auto"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  Go to Dashboard
+                </Button>
+              </Link>
+            ) : (
               <Button
                 size="lg"
-                data-ocid="hero.start_trading_button"
+                data-ocid="hero.signin_button"
+                onClick={() => login()}
                 className="bg-primary/20 border border-primary/50 text-buy hover:bg-primary/30 glow-buy font-semibold gap-2 w-full sm:w-auto"
               >
-                Start Trading Free
+                <LogIn className="w-4 h-4" />
+                Sign In with Internet Identity
                 <ArrowRight className="w-4 h-4" />
               </Button>
-            </Link>
-            <Link to="/dashboard">
-              <Button
-                size="lg"
-                variant="outline"
-                data-ocid="hero.demo_button"
-                className="border-border text-muted-foreground hover:text-foreground hover:border-accent/50 gap-2 w-full sm:w-auto"
-              >
-                View Live Demo
-                <ChevronRight className="w-4 h-4" />
-              </Button>
-            </Link>
+            )}
           </div>
         </motion.div>
 
@@ -145,7 +152,7 @@ export function HomePage() {
             { label: "Markets", value: "4" },
           ].map((stat) => (
             <div key={stat.label} className="text-center">
-              <div className="font-mono-num text-2xl font-bold text-buy">
+              <div className="font-mono text-2xl font-bold text-buy">
                 {stat.value}
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
@@ -166,7 +173,7 @@ export function HomePage() {
         >
           <div className="flex items-center gap-2 mb-8">
             <div className="h-px flex-1 bg-border" />
-            <span className="text-xs font-mono-num text-muted-foreground px-3">
+            <span className="text-xs font-mono text-muted-foreground px-3">
               LIVE MARKETS
             </span>
             <div className="h-px flex-1 bg-border" />
@@ -181,40 +188,40 @@ export function HomePage() {
                 viewport={{ once: true }}
                 transition={{ duration: 0.4, delay: i * 0.08 }}
               >
-                <Link to="/dashboard">
-                  <div className="terminal-border bg-card rounded p-4 hover:border-primary/30 transition-colors cursor-pointer">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <div className="text-xs text-muted-foreground mb-0.5">
-                          {market.name}
-                        </div>
-                        <div className="font-display text-sm font-semibold">
-                          {market.symbol}
-                        </div>
+                <div className="terminal-border bg-card rounded p-4 transition-colors">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-0.5">
+                        {market.name}
                       </div>
-                      <Badge
-                        className={`text-xs font-mono-num ${
-                          market.changePercent >= 0
-                            ? "bg-buy border-buy text-buy"
-                            : "bg-sell border-sell text-sell"
-                        }`}
-                        variant="outline"
-                      >
-                        {market.changePercent >= 0 ? "+" : ""}
-                        {market.changePercent.toFixed(2)}%
-                      </Badge>
+                      <div className="font-display text-sm font-semibold">
+                        {market.symbol}
+                      </div>
                     </div>
-                    <div className="font-mono-num text-xl font-bold">
-                      {market.price.toFixed(market.precision)}
-                    </div>
-                    <div
-                      className={`text-xs font-mono-num mt-1 ${market.change24h >= 0 ? "text-buy" : "text-sell"}`}
+                    <Badge
+                      className={`text-xs font-mono ${
+                        market.changePercent >= 0
+                          ? "bg-buy border-buy text-buy"
+                          : "bg-sell border-sell text-sell"
+                      }`}
+                      variant="outline"
                     >
-                      {market.change24h >= 0 ? "+" : ""}
-                      {market.change24h.toFixed(market.precision)}
-                    </div>
+                      {market.changePercent >= 0 ? "+" : ""}
+                      {market.changePercent.toFixed(2)}%
+                    </Badge>
                   </div>
-                </Link>
+                  <div className="font-mono text-xl font-bold">
+                    {market.price.toFixed(market.precision)}
+                  </div>
+                  <div
+                    className={`text-xs font-mono mt-1 ${
+                      market.change24h >= 0 ? "text-buy" : "text-sell"
+                    }`}
+                  >
+                    {market.change24h >= 0 ? "+" : ""}
+                    {market.change24h.toFixed(market.precision)}
+                  </div>
+                </div>
               </motion.div>
             ))}
           </div>
@@ -285,16 +292,29 @@ export function HomePage() {
           <p className="text-muted-foreground mb-6">
             Join thousands of traders using AI signals to maximize returns.
           </p>
-          <Link to="/register">
+          {isAuthed ? (
+            <Link to="/dashboard">
+              <Button
+                size="lg"
+                data-ocid="hero.go_to_dashboard_button"
+                className="bg-primary/20 border border-primary/50 text-buy hover:bg-primary/30 glow-buy font-semibold gap-2"
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                Go to Dashboard
+              </Button>
+            </Link>
+          ) : (
             <Button
               size="lg"
-              data-ocid="hero.start_trading_button"
+              data-ocid="hero.signin_button"
+              onClick={() => login()}
               className="bg-primary/20 border border-primary/50 text-buy hover:bg-primary/30 glow-buy font-semibold gap-2"
             >
-              Create Free Account
+              <LogIn className="w-4 h-4" />
+              Sign In with Internet Identity
               <ArrowRight className="w-4 h-4" />
             </Button>
-          </Link>
+          )}
         </motion.div>
       </section>
 
@@ -309,18 +329,14 @@ export function HomePage() {
             <Link to="/" className="hover:text-foreground transition-colors">
               Home
             </Link>
-            <Link
-              to="/dashboard"
-              className="hover:text-foreground transition-colors"
-            >
-              Dashboard
-            </Link>
-            <Link
-              to="/login"
-              className="hover:text-foreground transition-colors"
-            >
-              Sign In
-            </Link>
+            {isAuthed && (
+              <Link
+                to="/dashboard"
+                className="hover:text-foreground transition-colors"
+              >
+                Dashboard
+              </Link>
+            )}
           </div>
           <p className="text-xs text-muted-foreground text-center">
             © {new Date().getFullYear()}. Built with love using{" "}

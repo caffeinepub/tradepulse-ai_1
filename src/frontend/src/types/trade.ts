@@ -15,4 +15,6 @@ export interface TradeRecord {
   exitIndex?: number;
   status: "open" | "closed";
   pnl?: number;
+  tradeType?: "Scalp" | "Intraday" | "Swing" | "Position";
+  confirmationReason?: string;
 }

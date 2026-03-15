@@ -1,330 +1,474 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Loader2, Save, TrendingDown, TrendingUp, User } from "lucide-react";
+  Activity,
+  BarChart2,
+  Copy,
+  TrendingDown,
+  TrendingUp,
+  User,
+  Wallet,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
-import { useSaveUserProfile, useUserProfile } from "../hooks/useQueries";
-import { formatCurrency } from "../utils/priceSimulator";
+import { tradeStore } from "../store/tradeStore";
+import type { TradeRecord } from "../types/trade";
 
-const DEMO_HISTORY = [
-  {
-    id: "th-1",
-    symbol: "BTC/USD",
-    side: "buy" as const,
-    entryPrice: 62400.5,
-    closePrice: 65100.2,
-    quantity: 0.1,
-    pnl: 269.97,
-    date: "2026-03-10",
-  },
-  {
-    id: "th-2",
-    symbol: "ETH/USD",
-    side: "sell" as const,
-    entryPrice: 3520.0,
-    closePrice: 3380.0,
-    quantity: 0.5,
-    pnl: 70.0,
-    date: "2026-03-09",
-  },
-  {
-    id: "th-3",
-    symbol: "XAU/USD",
-    side: "buy" as const,
-    entryPrice: 2310.0,
-    closePrice: 2298.0,
-    quantity: 0.5,
-    pnl: -6.0,
-    date: "2026-03-08",
-  },
-  {
-    id: "th-4",
-    symbol: "EUR/USD",
-    side: "sell" as const,
-    entryPrice: 1.088,
-    closePrice: 1.083,
-    quantity: 1000,
-    pnl: 50.0,
-    date: "2026-03-07",
-  },
-];
+const TRADE_TYPE_COLORS: Record<string, string> = {
+  Scalp: "text-yellow-400 border-yellow-400/40",
+  Intraday: "text-blue-400 border-blue-400/40",
+  Swing: "text-purple-400 border-purple-400/40",
+  Position: "text-orange-400 border-orange-400/40",
+};
+
+function StatCard({
+  label,
+  value,
+  sub,
+  icon,
+  color,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon: React.ReactNode;
+  color?: string;
+}) {
+  return (
+    <Card
+      className="terminal-border"
+      style={{ background: "oklch(0.14 0.012 240)" }}
+    >
+      <CardContent className="p-4 flex items-start gap-3">
+        <div className="w-8 h-8 rounded flex items-center justify-center bg-secondary/60 mt-0.5 shrink-0">
+          {icon}
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-widest mb-0.5">
+            {label}
+          </p>
+          <p
+            className={`font-mono font-bold text-lg leading-none ${color ?? "text-foreground"}`}
+          >
+            {value}
+          </p>
+          {sub && (
+            <p className="text-[10px] text-muted-foreground mt-1">{sub}</p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TradeTypeBadge({ type }: { type?: string }) {
+  if (!type) return null;
+  const cls = TRADE_TYPE_COLORS[type] ?? "text-muted-foreground border-border";
+  return (
+    <Badge variant="outline" className={`text-[9px] py-0 px-1.5 h-4 ${cls}`}>
+      {type}
+    </Badge>
+  );
+}
 
 export function ProfilePage() {
   const { identity } = useInternetIdentity();
-  const { data: profile, isLoading } = useUserProfile();
-  const { mutate: saveProfile, isPending } = useSaveUserProfile();
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
+  const principal = identity?.getPrincipal().toString() ?? null;
+  const [copied, setCopied] = useState(false);
+  const [trades, setTrades] = useState<TradeRecord[]>(() =>
+    tradeStore.getTrades(),
+  );
 
   useEffect(() => {
-    if (profile) {
-      setDisplayName(profile.displayName);
-      setEmail(profile.email);
-    }
-  }, [profile]);
+    return tradeStore.subscribe(() => {
+      setTrades(tradeStore.getTrades());
+    });
+  }, []);
 
-  const handleSave = () => {
-    if (!profile) return;
-    saveProfile(
-      { ...profile, displayName, email },
-      {
-        onSuccess: () => toast.success("Profile saved"),
-        onError: () => toast.error("Failed to save profile"),
-      },
-    );
+  const openTrades = trades.filter((t) => t.status === "open");
+  const closedTrades = trades.filter((t) => t.status === "closed");
+  const wins = closedTrades.filter((t) => (t.pnl ?? 0) > 0).length;
+  const winRate =
+    closedTrades.length > 0 ? (wins / closedTrades.length) * 100 : 0;
+  const totalPnl = closedTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+
+  // Performance by trade type
+  const typeStats = ["Scalp", "Intraday", "Swing", "Position"].map((type) => {
+    const typeTrades = closedTrades.filter((t) => t.tradeType === type);
+    const typeWins = typeTrades.filter((t) => (t.pnl ?? 0) > 0).length;
+    const typePnl = typeTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+    return {
+      type,
+      count: typeTrades.length,
+      winRate: typeTrades.length > 0 ? (typeWins / typeTrades.length) * 100 : 0,
+      pnl: typePnl,
+    };
+  });
+
+  const copyPrincipal = () => {
+    if (!principal) return;
+    navigator.clipboard.writeText(principal).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
   };
 
-  const totalPnL = DEMO_HISTORY.reduce((sum, t) => sum + t.pnl, 0);
-  const wins = DEMO_HISTORY.filter((t) => t.pnl > 0).length;
-  const winRate = Math.round((wins / DEMO_HISTORY.length) * 100);
-  const principal = identity?.getPrincipal().toString();
-
   return (
-    <main className="min-h-screen pt-8 pb-16 px-4 max-w-screen-lg mx-auto">
+    <main
+      className="min-h-screen pt-6 pb-16 px-4 max-w-screen-xl mx-auto"
+      data-ocid="profile.page"
+    >
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: 0.4 }}
+        className="space-y-5"
       >
-        <h1 className="font-display text-2xl font-bold mb-6">
-          Account Profile
-        </h1>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left */}
-          <div className="lg:col-span-1 space-y-4">
-            <div className="terminal-border bg-card rounded-lg p-6">
-              <div className="flex flex-col items-center text-center">
-                <div className="w-16 h-16 rounded-full bg-primary/10 border-2 border-primary/30 flex items-center justify-center mb-3">
-                  <User className="w-8 h-8 text-buy" />
-                </div>
-                {isLoading ? (
-                  <>
-                    <Skeleton className="h-5 w-32 mb-2" />
-                    <Skeleton className="h-4 w-48" />
-                  </>
-                ) : (
-                  <>
-                    <div className="font-display font-bold text-lg">
-                      {profile?.displayName || "Demo Trader"}
-                    </div>
-                    <div className="text-sm text-muted-foreground mt-0.5">
-                      {profile?.email || "demo@tradepulse.ai"}
-                    </div>
-                  </>
-                )}
-                {principal && (
-                  <div className="mt-2 text-[10px] font-mono-num text-muted-foreground bg-secondary rounded px-2 py-0.5 truncate max-w-full">
-                    {principal.slice(0, 20)}…
-                  </div>
-                )}
-                <Badge
-                  variant="outline"
-                  className="mt-3 text-xs border-primary/30 text-buy"
-                >
-                  Demo Account
-                </Badge>
+        {/* User identity card */}
+        <Card
+          className="terminal-border"
+          style={{ background: "oklch(0.13 0.012 240)" }}
+          data-ocid="profile.card"
+        >
+          <CardContent className="p-5">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-full bg-primary/10 border-2 border-primary/30 flex items-center justify-center shrink-0">
+                <User className="w-6 h-6 text-buy" />
               </div>
-            </div>
-
-            <div className="terminal-border bg-card rounded-lg p-4">
-              <div className="text-xs font-semibold text-muted-foreground mb-3">
-                EDIT PROFILE
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <Label className="text-[10px] text-muted-foreground">
-                    Display Name
-                  </Label>
-                  <Input
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    data-ocid="profile.name_input"
-                    className="bg-input border-border mt-1 h-8 text-sm"
-                    placeholder="Your name"
-                  />
-                </div>
-                <div>
-                  <Label className="text-[10px] text-muted-foreground">
-                    Email
-                  </Label>
-                  <Input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    data-ocid="profile.email_input"
-                    className="bg-input border-border mt-1 h-8 text-sm font-mono-num"
-                    placeholder="you@example.com"
-                  />
-                </div>
-                <Button
-                  onClick={handleSave}
-                  data-ocid="profile.save_button"
-                  disabled={isPending}
-                  className="w-full h-8 text-xs bg-primary/20 border border-primary/40 text-buy hover:bg-primary/30 gap-1.5"
-                >
-                  {isPending ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <Save className="w-3 h-3" />
-                  )}
-                  Save Profile
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Right */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                {
-                  label: "Balance",
-                  value: formatCurrency(profile?.balance ?? 10000),
-                  color: "text-foreground",
-                },
-                {
-                  label: "Total Equity",
-                  value: formatCurrency((profile?.balance ?? 10000) + totalPnL),
-                  color: "text-foreground",
-                },
-                {
-                  label: "Open Positions",
-                  value: String(profile?.openPositions?.length ?? 2),
-                  color: "text-cyan",
-                },
-                { label: "Win Rate", value: `${winRate}%`, color: "text-buy" },
-              ].map((stat) => (
-                <div
-                  key={stat.label}
-                  className="terminal-border bg-card rounded p-3"
-                >
-                  <div className="text-[10px] text-muted-foreground mb-1">
-                    {stat.label}
-                  </div>
-                  <div
-                    className={`font-mono-num text-lg font-bold ${stat.color}`}
+              <div className="flex-1 min-w-0">
+                <h1 className="font-display text-xl font-bold mb-1 flex items-center gap-2">
+                  Trader Profile
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] border-buy/30 text-buy"
                   >
-                    {stat.value}
+                    Demo Account
+                  </Badge>
+                </h1>
+                {principal ? (
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-3 h-3 text-muted-foreground shrink-0" />
+                    <span className="text-[11px] font-mono text-muted-foreground truncate">
+                      {principal}
+                    </span>
+                    <button
+                      type="button"
+                      data-ocid="profile.copy_button"
+                      onClick={copyPrincipal}
+                      className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                      title="Copy principal ID"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </button>
+                    {copied && (
+                      <span className="text-[10px] text-buy animate-in fade-in">
+                        Copied!
+                      </span>
+                    )}
                   </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="terminal-border bg-card rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b border-border">
-                <div className="text-xs font-semibold text-muted-foreground">
-                  TRADE HISTORY
-                </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    Not logged in
+                  </p>
+                )}
               </div>
-              {DEMO_HISTORY.length === 0 ? (
-                <div
-                  data-ocid="trade_history.empty_state"
-                  className="text-center py-12 text-sm text-muted-foreground"
-                >
-                  No closed trades yet. Start trading to see your history.
-                </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Stats summary */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard
+            label="Total Trades"
+            value={String(closedTrades.length)}
+            sub={`${openTrades.length} open`}
+            icon={<Activity className="w-4 h-4 text-buy" />}
+          />
+          <StatCard
+            label="Win Rate"
+            value={`${winRate.toFixed(1)}%`}
+            sub={`${wins} wins / ${closedTrades.length - wins} losses`}
+            icon={
+              <BarChart2
+                className="w-4 h-4"
+                style={{ color: "oklch(0.72 0.18 60)" }}
+              />
+            }
+            color={winRate >= 50 ? "text-buy" : "text-sell"}
+          />
+          <StatCard
+            label="Total P&L"
+            value={`${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)} USDT`}
+            icon={
+              totalPnl >= 0 ? (
+                <TrendingUp className="w-4 h-4 text-buy" />
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-transparent">
-                      <TableHead className="text-[10px] text-muted-foreground font-normal">
-                        Symbol
-                      </TableHead>
-                      <TableHead className="text-[10px] text-muted-foreground font-normal">
-                        Side
-                      </TableHead>
-                      <TableHead className="text-[10px] text-muted-foreground font-normal">
-                        Entry
-                      </TableHead>
-                      <TableHead className="text-[10px] text-muted-foreground font-normal">
-                        Exit
-                      </TableHead>
-                      <TableHead className="text-[10px] text-muted-foreground font-normal text-right">
-                        P&amp;L
-                      </TableHead>
-                      <TableHead className="text-[10px] text-muted-foreground font-normal text-right">
-                        Date
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {DEMO_HISTORY.map((trade, displayIdx) => (
-                      <TableRow
-                        key={trade.id}
-                        data-ocid={`trade_history.row.${displayIdx + 1}`}
-                        className="border-border hover:bg-secondary/30"
-                      >
-                        <TableCell className="font-mono-num text-xs font-semibold py-2">
-                          {trade.symbol}
-                        </TableCell>
-                        <TableCell className="py-2">
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] py-0 ${
-                              trade.side === "buy"
-                                ? "bg-buy border-buy text-buy"
-                                : "bg-sell border-sell text-sell"
+                <TrendingDown className="w-4 h-4 text-sell" />
+              )
+            }
+            color={totalPnl >= 0 ? "text-buy" : "text-sell"}
+          />
+          <StatCard
+            label="Open Positions"
+            value={String(openTrades.length)}
+            sub="live exposure"
+            icon={<Activity className="w-4 h-4 text-purple-400" />}
+          />
+        </div>
+
+        {/* Tabs */}
+        <Tabs defaultValue="open" data-ocid="profile.tab">
+          <TabsList className="bg-secondary/40 border border-border h-8">
+            <TabsTrigger
+              value="open"
+              className="text-[11px] h-6"
+              data-ocid="profile.open_trades.tab"
+            >
+              Open Trades ({openTrades.length})
+            </TabsTrigger>
+            <TabsTrigger
+              value="history"
+              className="text-[11px] h-6"
+              data-ocid="profile.history.tab"
+            >
+              Trade History ({closedTrades.length})
+            </TabsTrigger>
+            <TabsTrigger
+              value="performance"
+              className="text-[11px] h-6"
+              data-ocid="profile.performance.tab"
+            >
+              Performance
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Open Trades */}
+          <TabsContent value="open">
+            <Card
+              className="terminal-border"
+              style={{ background: "oklch(0.13 0.012 240)" }}
+            >
+              <CardContent className="p-0">
+                {openTrades.length === 0 ? (
+                  <div
+                    data-ocid="profile.open_trades.empty_state"
+                    className="py-12 text-center text-sm text-muted-foreground"
+                  >
+                    No open positions
+                  </div>
+                ) : (
+                  <ScrollArea className="max-h-[480px]">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="border-b border-border">
+                          {[
+                            "Symbol",
+                            "Type",
+                            "Side",
+                            "Entry",
+                            "Live P&L",
+                            "Reason",
+                          ].map((h) => (
+                            <th
+                              key={h}
+                              className="text-left py-2 px-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
+                            >
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {openTrades.map((t, i) => (
+                          <tr
+                            key={t.id}
+                            data-ocid={`profile.open_trades.row.${i + 1}`}
+                            className="border-b border-border/40 hover:bg-secondary/20 transition-colors"
+                          >
+                            <td className="py-2 px-3 font-semibold">
+                              {t.symbol}
+                            </td>
+                            <td className="py-2 px-3">
+                              <TradeTypeBadge type={t.tradeType} />
+                            </td>
+                            <td
+                              className={`py-2 px-3 font-bold ${t.side === "buy" ? "text-buy" : "text-sell"}`}
+                            >
+                              {t.side.toUpperCase()}
+                            </td>
+                            <td className="py-2 px-3 font-mono">
+                              {t.entryPrice.toFixed(2)}
+                            </td>
+                            <td
+                              className={`py-2 px-3 font-mono font-semibold ${
+                                (t.pnl ?? 0) >= 0 ? "text-buy" : "text-sell"
+                              }`}
+                            >
+                              {(t.pnl ?? 0) >= 0 ? "+" : ""}
+                              {(t.pnl ?? 0).toFixed(2)}
+                            </td>
+                            <td className="py-2 px-3 text-muted-foreground max-w-[200px] truncate">
+                              {t.confirmationReason ?? "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollArea>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Trade History */}
+          <TabsContent value="history">
+            <Card
+              className="terminal-border"
+              style={{ background: "oklch(0.13 0.012 240)" }}
+            >
+              <CardContent className="p-0">
+                {closedTrades.length === 0 ? (
+                  <div
+                    data-ocid="profile.trade_history.empty_state"
+                    className="py-12 text-center text-sm text-muted-foreground"
+                  >
+                    No closed trades yet
+                  </div>
+                ) : (
+                  <ScrollArea className="max-h-[480px]">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="border-b border-border">
+                          {[
+                            "Symbol",
+                            "Type",
+                            "Side",
+                            "Entry",
+                            "Exit",
+                            "P&L",
+                            "Reason",
+                          ].map((h) => (
+                            <th
+                              key={h}
+                              className="text-left py-2 px-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
+                            >
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {closedTrades.slice(0, 200).map((t, i) => (
+                          <tr
+                            key={t.id}
+                            data-ocid={`profile.trade_history.row.${i + 1}`}
+                            className={`border-b border-border/40 hover:bg-secondary/20 transition-colors ${
+                              i % 2 === 0 ? "bg-secondary/10" : ""
                             }`}
                           >
-                            {trade.side.toUpperCase()}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono-num text-xs py-2 text-muted-foreground">
-                          {trade.entryPrice.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="font-mono-num text-xs py-2 text-muted-foreground">
-                          {trade.closePrice.toFixed(2)}
-                        </TableCell>
-                        <TableCell
-                          className={`font-mono-num text-xs py-2 text-right font-semibold ${trade.pnl >= 0 ? "text-buy" : "text-sell"}`}
-                        >
-                          {trade.pnl >= 0 ? "+" : ""}
-                          {formatCurrency(trade.pnl)}
-                        </TableCell>
-                        <TableCell className="font-mono-num text-xs py-2 text-right text-muted-foreground">
-                          {trade.date}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between terminal-border bg-card rounded p-3 text-xs">
-              <span className="text-muted-foreground">
-                {DEMO_HISTORY.length} closed trades
-              </span>
-              <div className="flex items-center gap-1.5">
-                {totalPnL >= 0 ? (
-                  <TrendingUp className="w-3.5 h-3.5 text-buy" />
-                ) : (
-                  <TrendingDown className="w-3.5 h-3.5 text-sell" />
+                            <td className="py-2 px-3 font-semibold">
+                              {t.symbol}
+                            </td>
+                            <td className="py-2 px-3">
+                              <TradeTypeBadge type={t.tradeType} />
+                            </td>
+                            <td
+                              className={`py-2 px-3 font-bold ${t.side === "buy" ? "text-buy" : "text-sell"}`}
+                            >
+                              {t.side.toUpperCase()}
+                            </td>
+                            <td className="py-2 px-3 font-mono">
+                              {t.entryPrice.toFixed(2)}
+                            </td>
+                            <td className="py-2 px-3 font-mono">
+                              {t.exitPrice?.toFixed(2) ?? "—"}
+                            </td>
+                            <td
+                              className={`py-2 px-3 font-mono font-semibold ${
+                                (t.pnl ?? 0) >= 0 ? "text-buy" : "text-sell"
+                              }`}
+                            >
+                              {(t.pnl ?? 0) >= 0 ? "+" : ""}
+                              {(t.pnl ?? 0).toFixed(2)}
+                            </td>
+                            <td className="py-2 px-3 text-muted-foreground max-w-[200px] truncate">
+                              {t.confirmationReason ?? "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollArea>
                 )}
-                <span
-                  className={`font-mono-num font-semibold ${totalPnL >= 0 ? "text-buy" : "text-sell"}`}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Performance by type */}
+          <TabsContent value="performance">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {typeStats.map((s) => (
+                <Card
+                  key={s.type}
+                  className="terminal-border"
+                  style={{ background: "oklch(0.14 0.012 240)" }}
+                  data-ocid={`profile.performance.${s.type.toLowerCase()}_card`}
                 >
-                  Total P&amp;L: {totalPnL >= 0 ? "+" : ""}
-                  {formatCurrency(totalPnL)}
-                </span>
-              </div>
+                  <CardHeader className="pb-2 pt-4 px-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <TradeTypeBadge type={s.type} />
+                      <span className="text-foreground font-semibold">
+                        {s.type}
+                      </span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4">
+                    {s.count === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        No trades yet
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">
+                            Trades
+                          </p>
+                          <p className="font-mono font-bold text-base">
+                            {s.count}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">
+                            Win Rate
+                          </p>
+                          <p
+                            className={`font-mono font-bold text-base ${s.winRate >= 50 ? "text-buy" : "text-sell"}`}
+                          >
+                            {s.winRate.toFixed(1)}%
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground mb-0.5">
+                            P&L
+                          </p>
+                          <p
+                            className={`font-mono font-bold text-base ${s.pnl >= 0 ? "text-buy" : "text-sell"}`}
+                          >
+                            {s.pnl >= 0 ? "+" : ""}
+                            {s.pnl.toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-          </div>
-        </div>
+          </TabsContent>
+        </Tabs>
       </motion.div>
     </main>
   );

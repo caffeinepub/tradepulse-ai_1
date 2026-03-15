@@ -84,6 +84,8 @@ export function useTradeHistory(
       tp1?: number;
       tp2?: number;
       tp3?: number;
+      tradeType?: TradeRecord["tradeType"];
+      confirmationReason?: string;
     }): TradeRecord => {
       tradeCounter += 1;
       const autoLevels = calcLevels(params.side, params.entryPrice);
@@ -100,6 +102,8 @@ export function useTradeHistory(
         tp3: params.tp3 ?? autoLevels.tp3,
         entryTime: new Date(),
         status: "open",
+        tradeType: params.tradeType,
+        confirmationReason: params.confirmationReason,
       };
       setTrades((prev) => [trade, ...prev].slice(0, 200));
       // Sync to module-level store for Analytics page
@@ -182,6 +186,8 @@ export function useTradeHistory(
       tp1: latest.tp1,
       tp2: latest.tp2,
       tp3: latest.tp3,
+      tradeType: latest.tradeType,
+      confirmationReason: latest.confirmationReason,
     });
     openSignalTradeIdRef.current = newTrade.id;
     lastSignalOpenTimeRef.current = now;

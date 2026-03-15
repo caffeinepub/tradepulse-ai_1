@@ -5,15 +5,16 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useNavigate,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Navbar } from "./components/Navbar";
 import { TickerBar } from "./components/TickerBar";
+import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HomePage } from "./pages/HomePage";
-import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
-import { RegisterPage } from "./pages/RegisterPage";
 
 function RootLayout() {
   return (
@@ -28,6 +29,21 @@ function RootLayout() {
   );
 }
 
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { identity, isInitializing } = useInternetIdentity();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isInitializing && !identity) {
+      navigate({ to: "/" });
+    }
+  }, [identity, isInitializing, navigate]);
+
+  if (isInitializing) return null;
+  if (!identity) return null;
+  return <>{children}</>;
+}
+
 const rootRoute = createRootRoute({
   component: RootLayout,
 });
@@ -38,22 +54,14 @@ const indexRoute = createRoute({
   component: HomePage,
 });
 
-const loginRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/login",
-  component: LoginPage,
-});
-
-const registerRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/register",
-  component: RegisterPage,
-});
-
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/dashboard",
-  component: DashboardPage,
+  component: () => (
+    <ProtectedRoute>
+      <DashboardPage />
+    </ProtectedRoute>
+  ),
 });
 
 const profileRoute = createRoute({
@@ -65,13 +73,15 @@ const profileRoute = createRoute({
 const analyticsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/analytics",
-  component: AnalyticsPage,
+  component: () => (
+    <ProtectedRoute>
+      <AnalyticsPage />
+    </ProtectedRoute>
+  ),
 });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  loginRoute,
-  registerRoute,
   dashboardRoute,
   profileRoute,
   analyticsRoute,

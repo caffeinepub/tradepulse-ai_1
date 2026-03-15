@@ -36,8 +36,6 @@ const SMC_TOGGLES: {
 
 interface ChartToolbarProps {
   symbol: string;
-  currentPrice: number;
-  priceChange: number;
   precision: number;
   timeframe: string;
   onTimeframeChange: (tf: string) => void;
@@ -47,16 +45,12 @@ interface ChartToolbarProps {
   onSMCToggle: (key: keyof SMCVisibility) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
-  candleSecondsLeft?: number;
   showDrawingToolbar: boolean;
   onToggleDrawingToolbar: () => void;
 }
 
 export function ChartToolbar({
   symbol,
-  currentPrice,
-  priceChange,
-  precision,
   timeframe,
   onTimeframeChange,
   chartType,
@@ -65,49 +59,18 @@ export function ChartToolbar({
   onSMCToggle,
   onZoomIn,
   onZoomOut,
-  candleSecondsLeft,
   showDrawingToolbar,
   onToggleDrawingToolbar,
 }: ChartToolbarProps) {
-  const priceUp = priceChange >= 0;
-
   return (
     <div
       className="flex items-center gap-1 px-2 border-b border-border bg-background shrink-0 overflow-x-auto"
       style={{ height: 38 }}
     >
-      {/* Symbol + price */}
+      {/* Symbol label only */}
       <div className="flex items-center gap-2 shrink-0">
         <span className="text-xs font-bold text-foreground">{symbol}</span>
-        <span
-          className={`font-mono text-xs font-bold ${
-            priceUp ? "text-buy" : "text-sell"
-          }`}
-        >
-          {currentPrice.toFixed(precision)}
-        </span>
-        <span
-          className={`font-mono text-[10px] ${
-            priceUp ? "text-buy" : "text-sell"
-          }`}
-        >
-          {priceUp ? "+" : ""}
-          {priceChange.toFixed(2)}%
-        </span>
       </div>
-
-      {/* Candle countdown */}
-      {candleSecondsLeft !== undefined && (
-        <div
-          className="shrink-0 flex items-center gap-1 text-[10px] font-mono text-muted-foreground px-1.5 py-0.5 rounded"
-          style={{ background: "oklch(0.16 0.012 240)" }}
-        >
-          <span>
-            {String(Math.floor(candleSecondsLeft / 60)).padStart(2, "0")}:
-            {String(candleSecondsLeft % 60).padStart(2, "0")}
-          </span>
-        </div>
-      )}
 
       <Separator orientation="vertical" className="h-4 mx-0.5 shrink-0" />
 

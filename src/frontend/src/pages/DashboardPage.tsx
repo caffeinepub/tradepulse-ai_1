@@ -15,9 +15,11 @@ import { TradeChartOverlay } from "../components/TradeChartOverlay";
 import { TradePopup } from "../components/TradePopup";
 import { WatchlistPanel } from "../components/WatchlistPanel";
 import { useAISignals } from "../hooks/useAISignals";
+import { useAutoTrading } from "../hooks/useAutoTrading";
 import { useCandleTimer } from "../hooks/useCandleTimer";
 import { useChartDrawings } from "../hooks/useChartDrawings";
 import { useChartViewport } from "../hooks/useChartViewport";
+import { useLivePnL } from "../hooks/useLivePnL";
 import { useMarketAnalysis } from "../hooks/useMarketAnalysis";
 import { useMultiTimeframe } from "../hooks/useMultiTimeframe";
 import { useNewsSentiment } from "../hooks/useNewsSentiment";
@@ -25,6 +27,7 @@ import { useUserProfile } from "../hooks/useQueries";
 import { useSMCEngine } from "../hooks/useSMCEngine";
 import { useStrategyOptimizer } from "../hooks/useStrategyOptimizer";
 import { useTradeHistory } from "../hooks/useTradeHistory";
+import { tradeStore } from "../store/tradeStore";
 import type { Drawing, DrawingPoint } from "../types/drawing";
 import type { SMCVisibility } from "../types/smc";
 import type { TradeRecord } from "../types/trade";
@@ -201,12 +204,8 @@ export function DashboardPage() {
   } | null>(null);
 
   // --- Live Binance price fetch on mount ---
-  // Fetches real prices from Binance REST API before the simulation starts,
-  // so the chart opens at the true market price instead of a hardcoded value.
   useEffect(() => {
     fetchLiveBinancePrices().then(() => {
-      // After fetching, refresh the prices state and regenerate chart data
-      // so the initial render uses the real Binance price.
       const allPrices = Object.fromEntries(
         SYMBOLS.map((s) => [s.symbol, getPriceState(s.symbol)]),
       );
@@ -214,7 +213,6 @@ export function DashboardPage() {
       const p = getCandleParams("1h");
       setChartData(generateChartData("BTC/USD"));
       const history = generateCandleHistory("BTC/USD", p.points, p.timeframeMs);
-      // Anchor the live (last) candle's open to the actual fetched BTC price
       const livePrice = allPrices["BTC/USD"]?.price ?? 0;
       if (history.length > 0 && livePrice > 0) {
         const last = { ...history[history.length - 1] };
@@ -229,16 +227,11 @@ export function DashboardPage() {
     });
   }, []);
 
-  // Reload candle data when symbol or timeframe changes.
-  // Anchors the last (live) candle's open to the current real price so the
-  // candle color immediately reflects the actual market direction.
   const handleSymbolOrTimeframeChange = useCallback(
     (sym: string, tf: string) => {
       const p = getCandleParams(tf);
       setChartData(generateChartData(sym));
       const history = generateCandleHistory(sym, p.points, p.timeframeMs);
-      // Use the most recent known price (from ref or from priceStates) to
-      // seed the live candle so its open matches reality.
       const livePrice =
         livePriceRef.current > 0
           ? livePriceRef.current
@@ -260,13 +253,8 @@ export function DashboardPage() {
     handleSymbolOrTimeframeChange(selectedSymbol, timeframe);
   }, [selectedSymbol, timeframe, handleSymbolOrTimeframeChange]);
 
-  // Price update loop — runs at 100ms for smooth chart updates.
-  // Uses timeframe-aware delta scaling so that 1H candles move at 1H speed
-  // rather than 1m speed. The scale factor is sqrt(60_000 / timeframeMs):
-  //   1m → 1.0, 5m → 0.447, 15m → 0.258, 1H → 0.129, 4H → 0.065, 1D → 0.026
   useEffect(() => {
     const p = getCandleParams(timeframe);
-    // sqrt gives us a Brownian-motion-appropriate scaling between timeframes
     const tickScaleFactor = Math.sqrt(60_000 / p.timeframeMs);
 
     const interval = setInterval(() => {
@@ -287,7 +275,6 @@ export function DashboardPage() {
       );
       const livePrice = newPrices[selectedSymbol]?.price;
       if (livePrice) {
-        // Keep ref in sync so handleNewCandle can seed the opening price correctly
         livePriceRef.current = livePrice;
         const config = SYMBOLS.find((s) => s.symbol === selectedSymbol);
         if (config) {
@@ -298,7 +285,6 @@ export function DashboardPage() {
     return () => clearInterval(interval);
   }, [selectedSymbol, timeframe]);
 
-  // Midnight reset
   useEffect(() => {
     const t = setInterval(() => {
       const today = new Date().toDateString();
@@ -310,16 +296,12 @@ export function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Called by useCandleTimer when a new candle period starts.
-  // Instead of regenerating all history (which causes a visible jump),
-  // we append a single new candle seeded from the last close price.
   const handleNewCandle = useCallback(() => {
     const p = getCandleParams(timeframe);
     setChartData(generateChartData(selectedSymbol));
     setCandleData((prev) => {
       if (prev.length === 0) return prev;
       const lastClose = prev[prev.length - 1].close;
-      // Prefer the live price ref if populated; fall back to last close
       const seedPrice =
         livePriceRef.current > 0 ? livePriceRef.current : lastClose;
       const now = Date.now();
@@ -336,7 +318,6 @@ export function DashboardPage() {
         close: seedPrice,
         index: prev.length,
       };
-      // Keep at most 200 candles to avoid unbounded growth
       const updated = [...prev, newCandle];
       return updated.length > 200
         ? updated.slice(updated.length - 200)
@@ -348,7 +329,6 @@ export function DashboardPage() {
 
   const { secondsRemaining } = useCandleTimer(timeframe, handleNewCandle);
 
-  // Analysis hooks
   const selectedConfig: SymbolConfig =
     SYMBOLS.find((s) => s.symbol === selectedSymbol) ?? SYMBOLS[0];
   const selectedPrice = prices[selectedSymbol];
@@ -432,7 +412,6 @@ export function DashboardPage() {
   const equity = balance + totalPnL;
   const dailyLossUsed = Math.min(0, dailyPnl);
 
-  // Push notifications when signals change
   useEffect(() => {
     if (!currentSignal) return;
     const dirKey = `${currentSignal.signal}-${currentSignal.entryPrice}`;
@@ -451,7 +430,6 @@ export function DashboardPage() {
     }
   }, [currentSignal, selectedSymbol, pushNotification]);
 
-  // Push optimizer notifications
   useEffect(() => {
     if (optimizationSummary) {
       pushNotification("optimizer", optimizationSummary);
@@ -475,6 +453,20 @@ export function DashboardPage() {
   }, [chartType, candleData, chartData]);
 
   const openTrades = chartRenderTrades.filter((t) => t.status === "open");
+
+  const [storeOpenTrades, setStoreOpenTrades] = useState(() =>
+    tradeStore.getTrades().filter((t) => t.status === "open"),
+  );
+  useEffect(() => {
+    return tradeStore.subscribe(() => {
+      setStoreOpenTrades(
+        tradeStore.getTrades().filter((t) => t.status === "open"),
+      );
+    });
+  }, []);
+
+  useAutoTrading(currentSignal, selectedPrice?.price ?? 0, selectedSymbol);
+  useLivePnL(selectedPrice?.price ?? 0, selectedSymbol);
 
   const handlePlaceOrder = useCallback(
     (side: "buy" | "sell") => {
@@ -521,7 +513,6 @@ export function DashboardPage() {
     [closeTrade, chartData.length],
   );
 
-  // Drawing handlers
   const handleDrawingStart = (point: DrawingPoint) => {
     if (activeTool === "hline") {
       addDrawing({
@@ -578,29 +569,173 @@ export function DashboardPage() {
     chartData.length > 1 &&
     chartData[chartData.length - 1].price >= chartData[0].price;
 
-  return (
-    <div
-      className="fixed left-0 right-0 bottom-0 flex flex-col overflow-hidden bg-background"
-      style={{ top: "5.5rem", zIndex: 10 }}
-    >
-      {/* 3-column layout */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── Left: Watchlist ── */}
-        <WatchlistPanel
-          collapsed={watchlistCollapsed}
-          onCollapse={setWatchlistCollapsed}
-          selectedSymbol={selectedSymbol}
-          onSymbolSelect={setSelectedSymbol}
-          prices={prices}
-        />
+  // Shared chart canvas props
+  const chartCanvasProps = {
+    chartType,
+    candles: candleData,
+    chartData,
+    openTrades,
+    selectedConfig,
+    isUp: isChartUp,
+    candleWidth,
+    viewOffset,
+    drawings,
+    activeTool,
+    selectedDrawingId,
+    drawingInProgress,
+    smcData,
+    smcVisibility,
+    onWheel: handleWheel,
+    onPanDelta: handlePanDelta,
+    onDrawingStart: handleDrawingStart,
+    onDrawingUpdate: handleDrawingUpdate,
+    onDrawingComplete: handleDrawingComplete,
+    onDrawingClick: handleDrawingClick,
+    onDrawingRightClick: (id: string, x: number, y: number) =>
+      setContextMenu({ drawingId: id, x, y }),
+    showEMA: true,
+    showVWAP: true,
+    livePrice: selectedPrice?.price ?? 0,
+    secondsRemaining,
+    selectedTimeframe: timeframe,
+    yScaleFactor,
+    yPanOffset,
+    freePanMode,
+    onYAxisDrag: handleYAxisDrag,
+    onFreePanDelta: handleFreePanDelta,
+    onDoubleClick: toggleFreePanMode,
+  };
 
-        {/* ── Center: Chart Area ── */}
-        <main className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* Unified toolbar */}
+  // Shared overlays rendered inside chart container
+  const renderChartOverlays = () => (
+    <>
+      <TradeChartOverlay
+        trades={chartRenderTrades}
+        chartData={chartData}
+        containerRef={chartContainerRef}
+        priceMin={priceMin}
+        priceMax={priceMax}
+        onMarkerClick={(trade, x, y) => setActivePopup({ trade, x, y })}
+      />
+      {activePopup && (
+        <TradePopup
+          trade={activePopup.trade}
+          x={activePopup.x}
+          y={activePopup.y}
+          onClose={() => setActivePopup(null)}
+        />
+      )}
+      {contextMenu && (
+        <div
+          className="fixed z-50 rounded border border-border bg-card shadow-lg py-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            type="button"
+            className="w-full px-4 py-1.5 text-xs text-destructive hover:bg-secondary transition-colors text-left"
+            onClick={() => {
+              deleteDrawing(contextMenu.drawingId);
+              setContextMenu(null);
+            }}
+          >
+            Delete Drawing
+          </button>
+          <button
+            type="button"
+            className="w-full px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors text-left"
+            onClick={() => setContextMenu(null)}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  // Shared sidebar panels
+  const renderSidebarPanels = () => (
+    <>
+      <SignalsPanel
+        currentSignal={currentSignal}
+        history={signalHistory}
+        symbol={selectedSymbol}
+        signalExpiresAt={signalExpiresAt}
+        smcContext={smcContext}
+      />
+      <OpenTradePanel
+        positions={positions}
+        positionSize={positionSize}
+        onPositionSizeChange={setPositionSize}
+        scalpsToday={scalpsToday}
+        dailyPnl={dailyPnl}
+        dailyLossLimitHit={dailyLossLimitHit}
+        signalTrades={storeOpenTrades}
+        onClosePosition={(id) => {
+          const signalTrade = storeOpenTrades.find((t) => t.id === id);
+          if (signalTrade) {
+            const price = selectedPrice?.price ?? signalTrade.entryPrice;
+            tradeStore.updateTrade({
+              ...signalTrade,
+              status: "closed",
+              exitPrice: price,
+              exitTime: new Date(),
+              pnl:
+                signalTrade.side === "buy"
+                  ? price - signalTrade.entryPrice
+                  : signalTrade.entryPrice - price,
+            });
+            return;
+          }
+          const pos = positions.find((p) => p.id === id);
+          if (pos) handleClosePosition(id, pos.currentPrice);
+        }}
+      />
+      <div className="px-3 py-2 border-b border-border flex gap-2">
+        <Button
+          onClick={() => handlePlaceOrder("buy")}
+          disabled={dailyLossLimitHit}
+          data-ocid="dashboard.place_order_button"
+          className="flex-1 h-7 text-xs font-bold bg-buy/20 border border-buy/40 text-buy hover:bg-buy/30"
+        >
+          BUY
+        </Button>
+        <Button
+          onClick={() => handlePlaceOrder("sell")}
+          disabled={dailyLossLimitHit}
+          data-ocid="dashboard.sell_button"
+          className="flex-1 h-7 text-xs font-bold bg-sell/20 border border-sell/40 text-sell hover:bg-sell/30"
+        >
+          SELL
+        </Button>
+      </div>
+      <NotificationsPanel
+        notifications={notifications}
+        onClearAll={() => setNotifications([])}
+      />
+      <MarketAnalysisPanel
+        analysis={analysis}
+        symbol={selectedSymbol}
+        mtf={mtf}
+        headlines={newsHeadlines}
+        overallSentiment={overallSentiment}
+        sentimentStrength={sentimentStrength}
+        optimizationSummary={optimizationSummary}
+        dismissSummary={dismissSummary}
+      />
+    </>
+  );
+
+  return (
+    <>
+      {/* ── Mobile layout (portrait) ── */}
+      <div
+        className="md:hidden fixed left-0 right-0 bottom-0 flex flex-col bg-background overflow-y-auto"
+        style={{ top: "5.5rem", zIndex: 10 }}
+      >
+        {/* Chart section — fixed height */}
+        <div className="flex flex-col shrink-0" style={{ height: "55vh" }}>
           <ChartToolbar
             symbol={selectedConfig.symbol}
-            currentPrice={selectedPrice?.price ?? 0}
-            priceChange={selectedPrice?.changePercent ?? 0}
             precision={selectedConfig.precision}
             timeframe={timeframe}
             onTimeframeChange={setTimeframe}
@@ -610,12 +745,9 @@ export function DashboardPage() {
             onSMCToggle={handleSMCToggle}
             onZoomIn={() => handleWheel({ deltaY: -120 } as WheelEvent, 0.5)}
             onZoomOut={() => handleWheel({ deltaY: 120 } as WheelEvent, 0.5)}
-            candleSecondsLeft={secondsRemaining}
             showDrawingToolbar={showDrawingToolbar}
             onToggleDrawingToolbar={() => setShowDrawingToolbar((v) => !v)}
           />
-
-          {/* Daily loss warning */}
           {dailyLossLimitHit && (
             <div
               data-ocid="risk.daily_loss_limit_badge"
@@ -631,112 +763,18 @@ export function DashboardPage() {
               Continue.
             </div>
           )}
-
-          {/* Chart + drawing toolbar */}
           <div
-            className={`flex flex-1 overflow-hidden transition-all ${
-              candleFlash ? "candle-flash" : ""
-            }`}
+            ref={chartContainerRef}
+            className="flex-1 min-h-0 relative"
+            style={{ minHeight: "200px" }}
           >
-            {showDrawingToolbar && (
-              <ChartDrawingToolbar
-                activeTool={activeTool}
-                onToolChange={setActiveTool}
-              />
-            )}
-            <div ref={chartContainerRef} className="flex-1 min-h-0 relative">
-              <ChartCanvas
-                chartType={chartType}
-                candles={candleData}
-                chartData={chartData}
-                openTrades={openTrades}
-                selectedConfig={selectedConfig}
-                isUp={isChartUp}
-                candleWidth={candleWidth}
-                viewOffset={viewOffset}
-                drawings={drawings}
-                activeTool={activeTool}
-                selectedDrawingId={selectedDrawingId}
-                drawingInProgress={drawingInProgress}
-                smcData={smcData}
-                smcVisibility={smcVisibility}
-                onWheel={handleWheel}
-                onPanDelta={handlePanDelta}
-                onDrawingStart={handleDrawingStart}
-                onDrawingUpdate={handleDrawingUpdate}
-                onDrawingComplete={handleDrawingComplete}
-                onDrawingClick={handleDrawingClick}
-                onDrawingRightClick={(id, x, y) =>
-                  setContextMenu({ drawingId: id, x, y })
-                }
-                showEMA={true}
-                showVWAP={true}
-                livePrice={selectedPrice?.price ?? 0}
-                secondsRemaining={secondsRemaining}
-                selectedTimeframe={timeframe}
-                yScaleFactor={yScaleFactor}
-                yPanOffset={yPanOffset}
-                freePanMode={freePanMode}
-                onYAxisDrag={handleYAxisDrag}
-                onFreePanDelta={handleFreePanDelta}
-                onDoubleClick={toggleFreePanMode}
-              />
-
-              {/* Trade marker overlay */}
-              <TradeChartOverlay
-                trades={chartRenderTrades}
-                chartData={chartData}
-                containerRef={chartContainerRef}
-                priceMin={priceMin}
-                priceMax={priceMax}
-                onMarkerClick={(trade, x, y) => setActivePopup({ trade, x, y })}
-              />
-
-              {/* Trade popup */}
-              {activePopup && (
-                <TradePopup
-                  trade={activePopup.trade}
-                  x={activePopup.x}
-                  y={activePopup.y}
-                  onClose={() => setActivePopup(null)}
-                />
-              )}
-
-              {/* Context menu */}
-              {contextMenu && (
-                <div
-                  className="fixed z-50 rounded border border-border bg-card shadow-lg py-1"
-                  style={{ left: contextMenu.x, top: contextMenu.y }}
-                >
-                  <button
-                    type="button"
-                    className="w-full px-4 py-1.5 text-xs text-destructive hover:bg-secondary transition-colors text-left"
-                    onClick={() => {
-                      deleteDrawing(contextMenu.drawingId);
-                      setContextMenu(null);
-                    }}
-                  >
-                    Delete Drawing
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full px-4 py-1.5 text-xs text-muted-foreground hover:bg-secondary transition-colors text-left"
-                    onClick={() => setContextMenu(null)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
+            <ChartCanvas {...chartCanvasProps} />
+            {renderChartOverlays()}
           </div>
-        </main>
+        </div>
 
-        {/* ── Right: Sidebar ── */}
-        <aside
-          className="hidden md:flex flex-col border-l border-border bg-background shrink-0 overflow-hidden"
-          style={{ width: 300 }}
-        >
-          {/* Session info */}
+        {/* Panels below chart — natural height, scrolls with parent */}
+        <div className="flex flex-col border-t border-border">
           <SessionInfoStrip
             balance={balance}
             equity={equity}
@@ -745,71 +783,93 @@ export function DashboardPage() {
             dailyLossLimit={200}
             scalpsToday={scalpsToday}
           />
-
-          <ScrollArea className="flex-1">
-            {/* Current signal */}
-            <SignalsPanel
-              currentSignal={currentSignal}
-              history={signalHistory}
-              symbol={selectedSymbol}
-              signalExpiresAt={signalExpiresAt}
-              smcContext={smcContext}
-            />
-
-            {/* Open trades */}
-            <OpenTradePanel
-              positions={positions}
-              positionSize={positionSize}
-              onPositionSizeChange={setPositionSize}
-              scalpsToday={scalpsToday}
-              dailyPnl={dailyPnl}
-              dailyLossLimitHit={dailyLossLimitHit}
-              onClosePosition={(id) => {
-                const pos = positions.find((p) => p.id === id);
-                if (pos) handleClosePosition(id, pos.currentPrice);
-              }}
-            />
-
-            {/* Quick order buttons */}
-            <div className="px-3 py-2 border-b border-border flex gap-2">
-              <Button
-                onClick={() => handlePlaceOrder("buy")}
-                disabled={dailyLossLimitHit}
-                data-ocid="dashboard.place_order_button"
-                className="flex-1 h-7 text-xs font-bold bg-buy/20 border border-buy/40 text-buy hover:bg-buy/30"
-              >
-                BUY
-              </Button>
-              <Button
-                onClick={() => handlePlaceOrder("sell")}
-                disabled={dailyLossLimitHit}
-                data-ocid="dashboard.sell_button"
-                className="flex-1 h-7 text-xs font-bold bg-sell/20 border border-sell/40 text-sell hover:bg-sell/30"
-              >
-                SELL
-              </Button>
-            </div>
-
-            {/* Notifications */}
-            <NotificationsPanel
-              notifications={notifications}
-              onClearAll={() => setNotifications([])}
-            />
-
-            {/* Market analysis */}
-            <MarketAnalysisPanel
-              analysis={analysis}
-              symbol={selectedSymbol}
-              mtf={mtf}
-              headlines={newsHeadlines}
-              overallSentiment={overallSentiment}
-              sentimentStrength={sentimentStrength}
-              optimizationSummary={optimizationSummary}
-              dismissSummary={dismissSummary}
-            />
-          </ScrollArea>
-        </aside>
+          {renderSidebarPanels()}
+        </div>
       </div>
-    </div>
+
+      {/* ── Desktop layout — unchanged, hidden on mobile ── */}
+      <div
+        className="hidden md:flex fixed left-0 right-0 bottom-0 flex-col overflow-hidden bg-background"
+        style={{ top: "5.5rem", zIndex: 10 }}
+      >
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left: Watchlist */}
+          <WatchlistPanel
+            collapsed={watchlistCollapsed}
+            onCollapse={setWatchlistCollapsed}
+            selectedSymbol={selectedSymbol}
+            onSymbolSelect={setSelectedSymbol}
+            prices={prices}
+          />
+
+          {/* Center: Chart Area */}
+          <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+            <ChartToolbar
+              symbol={selectedConfig.symbol}
+              precision={selectedConfig.precision}
+              timeframe={timeframe}
+              onTimeframeChange={setTimeframe}
+              chartType={chartType}
+              onChartTypeChange={(t) => setChartType(t as ChartType)}
+              smcVisibility={smcVisibility}
+              onSMCToggle={handleSMCToggle}
+              onZoomIn={() => handleWheel({ deltaY: -120 } as WheelEvent, 0.5)}
+              onZoomOut={() => handleWheel({ deltaY: 120 } as WheelEvent, 0.5)}
+              showDrawingToolbar={showDrawingToolbar}
+              onToggleDrawingToolbar={() => setShowDrawingToolbar((v) => !v)}
+            />
+
+            {dailyLossLimitHit && (
+              <div
+                data-ocid="risk.daily_loss_limit_badge"
+                className="flex items-center gap-1.5 px-3 py-1 text-[10px] font-semibold shrink-0"
+                style={{
+                  background: "oklch(0.18 0.08 27 / 0.6)",
+                  borderBottom: "1px solid oklch(0.45 0.18 27 / 0.4)",
+                  color: "oklch(0.75 0.12 27)",
+                }}
+              >
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                Daily Loss Limit Reached — Demo Trading Paused. AI Signals
+                Continue.
+              </div>
+            )}
+
+            <div
+              className={`flex flex-1 overflow-hidden transition-all ${
+                candleFlash ? "candle-flash" : ""
+              }`}
+            >
+              {showDrawingToolbar && (
+                <ChartDrawingToolbar
+                  activeTool={activeTool}
+                  onToolChange={setActiveTool}
+                />
+              )}
+              <div ref={chartContainerRef} className="flex-1 min-h-0 relative">
+                <ChartCanvas {...chartCanvasProps} />
+                {renderChartOverlays()}
+              </div>
+            </div>
+          </main>
+
+          {/* Right: Sidebar */}
+          <aside
+            className="hidden md:flex flex-col border-l border-border bg-background shrink-0 overflow-hidden"
+            style={{ width: 300 }}
+          >
+            <SessionInfoStrip
+              balance={balance}
+              equity={equity}
+              dailyPnl={dailyPnl}
+              dailyLossUsed={dailyLossUsed}
+              dailyLossLimit={200}
+              scalpsToday={scalpsToday}
+            />
+            <ScrollArea className="flex-1">{renderSidebarPanels()}</ScrollArea>
+          </aside>
+        </div>
+      </div>
+    </>
   );
 }

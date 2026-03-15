@@ -55,7 +55,7 @@ export function WatchlistPanel({
   return (
     <aside
       data-ocid="watchlist.panel"
-      className="flex flex-col border-r border-border bg-background shrink-0 transition-all duration-200 overflow-hidden"
+      className="hidden md:flex flex-col border-r border-border bg-background shrink-0 transition-all duration-200 overflow-hidden"
       style={{ width: collapsed ? 40 : 200 }}
     >
       {/* Header */}

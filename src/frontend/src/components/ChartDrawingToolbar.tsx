@@ -57,7 +57,7 @@ export function ChartDrawingToolbar({
   return (
     <div
       data-ocid="chart.drawing_toolbar"
-      className="flex flex-col gap-0.5 p-1 shrink-0 border-r border-border"
+      className="hidden md:flex flex-col gap-0.5 p-1 shrink-0 border-r border-border"
       style={{ background: "oklch(0.13 0.012 240)", width: 36 }}
     >
       {TOOLS.map((tool) => {

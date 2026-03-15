@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { TradeRecord } from "../types/trade";
 import { formatCurrency } from "../utils/priceSimulator";
 
 interface SimPosition {
@@ -14,6 +15,13 @@ interface SimPosition {
   pnl: number;
 }
 
+const TRADE_TYPE_CLS: Record<string, string> = {
+  Scalp: "text-yellow-400 border-yellow-400/40",
+  Intraday: "text-blue-400 border-blue-400/40",
+  Swing: "text-purple-400 border-purple-400/40",
+  Position: "text-orange-400 border-orange-400/40",
+};
+
 interface OpenTradePanelProps {
   positions: SimPosition[];
   positionSize: number;
@@ -22,6 +30,8 @@ interface OpenTradePanelProps {
   dailyPnl: number;
   dailyLossLimitHit: boolean;
   onClosePosition: (id: string, price: number) => void;
+  /** AI/signal trades from tradeStore with full metadata */
+  signalTrades?: TradeRecord[];
 }
 
 export function OpenTradePanel({
@@ -32,7 +42,10 @@ export function OpenTradePanel({
   dailyPnl,
   dailyLossLimitHit,
   onClosePosition,
+  signalTrades = [],
 }: OpenTradePanelProps) {
+  const totalCount = positions.length + signalTrades.length;
+
   return (
     <div data-ocid="open_trades.panel" className="border-b border-border">
       {/* Header */}
@@ -45,7 +58,7 @@ export function OpenTradePanel({
             variant="outline"
             className="text-[9px] h-4 px-1.5 border-border"
           >
-            {positions.length}
+            {totalCount}
           </Badge>
           {dailyLossLimitHit && (
             <Badge
@@ -78,9 +91,9 @@ export function OpenTradePanel({
       </div>
 
       {/* Positions list */}
-      <ScrollArea style={{ maxHeight: 180 }}>
+      <ScrollArea style={{ maxHeight: 220 }}>
         <div className="p-2 space-y-1.5">
-          {positions.length === 0 ? (
+          {totalCount === 0 ? (
             <div
               data-ocid="open_trades.empty_state"
               className="text-center py-4 text-[10px] text-muted-foreground"
@@ -88,60 +101,154 @@ export function OpenTradePanel({
               No open positions
             </div>
           ) : (
-            positions.map((pos, i) => (
-              <div
-                key={pos.id}
-                data-ocid={`open_trades.item.${i + 1}`}
-                className={`rounded p-2 text-[10px] border border-border/50 ${
-                  pos.side === "buy"
-                    ? "border-l-2 border-l-buy/60"
-                    : "border-l-2 border-l-sell/60"
-                }`}
-                style={{ background: "oklch(0.13 0.012 240)" }}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold text-[10px] text-foreground">
-                    {pos.symbol}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <Badge
-                      variant="outline"
-                      className={`text-[8px] py-0 px-1 h-3.5 ${
-                        pos.side === "buy"
-                          ? "text-buy border-buy/30"
-                          : "text-sell border-sell/30"
-                      }`}
-                    >
-                      {pos.side.toUpperCase()}
-                    </Badge>
+            <>
+              {/* AI / Signal trades with full metadata */}
+              {signalTrades.map((trade, i) => (
+                <div
+                  key={trade.id}
+                  data-ocid={`open_trades.item.${i + 1}`}
+                  className={`rounded p-2 text-[10px] border border-border/50 ${
+                    trade.side === "buy"
+                      ? "border-l-2 border-l-buy/60"
+                      : "border-l-2 border-l-sell/60"
+                  }`}
+                  style={{ background: "oklch(0.13 0.012 240)" }}
+                >
+                  {/* Row 1: symbol + badges + close btn */}
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="font-semibold text-[10px] text-foreground shrink-0">
+                        {trade.symbol}
+                      </span>
+                      {trade.tradeType && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[8px] py-0 px-1 h-3.5 shrink-0 ${
+                            TRADE_TYPE_CLS[trade.tradeType] ??
+                            "text-muted-foreground border-border"
+                          }`}
+                        >
+                          {trade.tradeType}
+                        </Badge>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={`text-[8px] py-0 px-1 h-3.5 shrink-0 ${
+                          trade.side === "buy"
+                            ? "text-buy border-buy/30"
+                            : "text-sell border-sell/30"
+                        }`}
+                      >
+                        {trade.side.toUpperCase()}
+                      </Badge>
+                    </div>
                     <button
                       type="button"
                       data-ocid={`open_trades.delete_button.${i + 1}`}
-                      onClick={() => onClosePosition(pos.id, pos.currentPrice)}
-                      className="text-[9px] text-muted-foreground hover:text-sell px-1 rounded transition-colors"
+                      onClick={() =>
+                        onClosePosition(trade.id, trade.entryPrice)
+                      }
+                      className="text-[9px] text-muted-foreground hover:text-sell px-1 rounded transition-colors shrink-0"
                     >
                       ✕
                     </button>
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-x-2 text-[9px] text-muted-foreground">
-                  <span>
-                    Entry:{" "}
-                    <span className="font-mono text-foreground">
-                      {pos.entryPrice.toFixed(2)}
+
+                  {/* Row 2: entry + live P&L */}
+                  <div className="grid grid-cols-2 gap-x-2 text-[9px] text-muted-foreground mb-1">
+                    <span>
+                      Entry:{" "}
+                      <span className="font-mono text-foreground">
+                        {trade.entryPrice.toFixed(2)}
+                      </span>
                     </span>
-                  </span>
-                  <span
-                    className={`text-right font-mono font-bold ${
-                      pos.pnl >= 0 ? "text-buy" : "text-sell"
-                    }`}
-                  >
-                    {pos.pnl >= 0 ? "+" : ""}
-                    {formatCurrency(pos.pnl)}
-                  </span>
+                    <span
+                      className={`text-right font-mono font-bold ${
+                        (trade.pnl ?? 0) >= 0 ? "text-buy" : "text-sell"
+                      }`}
+                    >
+                      {(trade.pnl ?? 0) >= 0 ? "+" : ""}
+                      {formatCurrency(trade.pnl ?? 0)}
+                    </span>
+                  </div>
+
+                  {/* Row 3: confirmation reason */}
+                  {trade.confirmationReason && (
+                    <p className="text-[8px] text-muted-foreground/70 truncate leading-snug">
+                      {trade.confirmationReason}
+                    </p>
+                  )}
                 </div>
-              </div>
-            ))
+              ))}
+
+              {/* Manual / demo positions */}
+              {positions.map((pos, i) => (
+                <div
+                  key={pos.id}
+                  data-ocid={`open_trades.item.${signalTrades.length + i + 1}`}
+                  className={`rounded p-2 text-[10px] border border-border/50 ${
+                    pos.side === "buy"
+                      ? "border-l-2 border-l-buy/60"
+                      : "border-l-2 border-l-sell/60"
+                  }`}
+                  style={{ background: "oklch(0.13 0.012 240)" }}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1">
+                      <span className="font-semibold text-[10px] text-foreground">
+                        {pos.symbol}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className="text-[8px] py-0 px-1 h-3.5 text-muted-foreground border-border"
+                      >
+                        Manual
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Badge
+                        variant="outline"
+                        className={`text-[8px] py-0 px-1 h-3.5 ${
+                          pos.side === "buy"
+                            ? "text-buy border-buy/30"
+                            : "text-sell border-sell/30"
+                        }`}
+                      >
+                        {pos.side.toUpperCase()}
+                      </Badge>
+                      <button
+                        type="button"
+                        data-ocid={`open_trades.delete_button.${
+                          signalTrades.length + i + 1
+                        }`}
+                        onClick={() =>
+                          onClosePosition(pos.id, pos.currentPrice)
+                        }
+                        className="text-[9px] text-muted-foreground hover:text-sell px-1 rounded transition-colors"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-2 text-[9px] text-muted-foreground">
+                    <span>
+                      Entry:{" "}
+                      <span className="font-mono text-foreground">
+                        {pos.entryPrice.toFixed(2)}
+                      </span>
+                    </span>
+                    <span
+                      className={`text-right font-mono font-bold ${
+                        pos.pnl >= 0 ? "text-buy" : "text-sell"
+                      }`}
+                    >
+                      {pos.pnl >= 0 ? "+" : ""}
+                      {formatCurrency(pos.pnl)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </>
           )}
         </div>
       </ScrollArea>

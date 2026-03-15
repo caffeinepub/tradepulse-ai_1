@@ -8,7 +8,6 @@ import {
   Menu,
   TrendingUp,
   User,
-  UserPlus,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -18,40 +17,39 @@ import { useInternetIdentity } from "../hooks/useInternetIdentity";
 export function Navbar() {
   const routerState = useRouterState();
   const pathname = routerState.location.pathname;
-  const { identity, clear, isInitializing } = useInternetIdentity();
+  const { identity, login, clear, isInitializing } = useInternetIdentity();
   const isAuthed = !!identity;
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const navLinks = [
-    {
-      to: "/" as const,
-      label: "Home",
-      ocid: "nav.home_link",
-      icon: TrendingUp,
-    },
-    {
-      to: "/dashboard" as const,
-      label: "Dashboard",
-      ocid: "nav.dashboard_link",
-      icon: BarChart2,
-    },
-    {
-      to: "/analytics" as const,
-      label: "Analytics",
-      ocid: "nav.analytics_link",
-      icon: LineChart,
-    },
-    ...(isAuthed
-      ? [
-          {
-            to: "/profile" as const,
-            label: "Profile",
-            ocid: "nav.profile_link",
-            icon: User,
-          },
-        ]
-      : []),
-  ];
+  const navLinks = isAuthed
+    ? [
+        {
+          to: "/dashboard" as const,
+          label: "Dashboard",
+          ocid: "nav.dashboard_link",
+          icon: BarChart2,
+        },
+        {
+          to: "/analytics" as const,
+          label: "Analytics",
+          ocid: "nav.analytics_link",
+          icon: LineChart,
+        },
+        {
+          to: "/profile" as const,
+          label: "Profile",
+          ocid: "nav.profile_link",
+          icon: User,
+        },
+      ]
+    : [
+        {
+          to: "/" as const,
+          label: "Home",
+          ocid: "nav.home_link",
+          icon: TrendingUp,
+        },
+      ];
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-b border-border">
@@ -91,7 +89,7 @@ export function Navbar() {
         <div className="hidden md:flex items-center gap-2">
           {isInitializing ? null : isAuthed ? (
             <>
-              <span className="text-xs text-muted-foreground font-mono-num truncate max-w-[120px]">
+              <span className="text-xs text-muted-foreground font-mono truncate max-w-[120px]">
                 {identity?.getPrincipal().toString().slice(0, 12)}…
               </span>
               <Button
@@ -106,29 +104,15 @@ export function Navbar() {
               </Button>
             </>
           ) : (
-            <>
-              <Link to="/login">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  data-ocid="nav.login_button"
-                  className="gap-1.5"
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  Sign In
-                </Button>
-              </Link>
-              <Link to="/register">
-                <Button
-                  size="sm"
-                  data-ocid="nav.register_button"
-                  className="gap-1.5 bg-primary/20 border border-primary/40 text-buy hover:bg-primary/30"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  Register
-                </Button>
-              </Link>
-            </>
+            <Button
+              size="sm"
+              data-ocid="nav.login_button"
+              onClick={() => login()}
+              className="gap-1.5 bg-primary/20 border border-primary/50 text-buy hover:bg-primary/30"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              Sign In
+            </Button>
           )}
         </div>
 
@@ -173,7 +157,7 @@ export function Navbar() {
                   </Link>
                 );
               })}
-              <div className="border-t border-border mt-2 pt-2 flex flex-col gap-1">
+              <div className="border-t border-border mt-2 pt-2">
                 {isAuthed ? (
                   <button
                     type="button"
@@ -182,34 +166,24 @@ export function Navbar() {
                       clear();
                       setMenuOpen(false);
                     }}
-                    className="px-3 py-2 text-sm text-destructive hover:bg-secondary rounded flex items-center gap-2"
+                    className="w-full px-3 py-2 text-sm text-destructive hover:bg-secondary rounded flex items-center gap-2"
                   >
                     <LogOut className="w-4 h-4" />
                     Logout
                   </button>
                 ) : (
-                  <>
-                    <Link to="/login" onClick={() => setMenuOpen(false)}>
-                      <button
-                        type="button"
-                        data-ocid="nav.login_button"
-                        className="w-full px-3 py-2 text-sm text-muted-foreground hover:bg-secondary rounded flex items-center gap-2"
-                      >
-                        <LogIn className="w-4 h-4" />
-                        Sign In
-                      </button>
-                    </Link>
-                    <Link to="/register" onClick={() => setMenuOpen(false)}>
-                      <button
-                        type="button"
-                        data-ocid="nav.register_button"
-                        className="w-full px-3 py-2 text-sm text-buy hover:bg-secondary rounded flex items-center gap-2"
-                      >
-                        <UserPlus className="w-4 h-4" />
-                        Register
-                      </button>
-                    </Link>
-                  </>
+                  <button
+                    type="button"
+                    data-ocid="nav.login_button"
+                    onClick={() => {
+                      login();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full px-3 py-2 text-sm text-buy hover:bg-secondary rounded flex items-center gap-2"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    Sign In
+                  </button>
                 )}
               </div>
             </div>

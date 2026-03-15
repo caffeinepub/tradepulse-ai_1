@@ -681,12 +681,14 @@ export function AnalyticsPage() {
                         <tr className="border-b border-border">
                           {[
                             "Symbol",
+                            "Type",
                             "Side",
                             "Entry",
                             "Exit",
                             "P&L",
                             "Duration",
                             "Source",
+                            "Reason",
                           ].map((h) => (
                             <th
                               key={h}
@@ -708,6 +710,24 @@ export function AnalyticsPage() {
                           >
                             <td className="py-1.5 px-3 font-semibold">
                               {t.symbol}
+                            </td>
+                            <td className="py-1.5 px-3">
+                              {t.tradeType && (
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[9px] py-0 px-1.5 h-4 ${
+                                    t.tradeType === "Scalp"
+                                      ? "text-yellow-400 border-yellow-400/40"
+                                      : t.tradeType === "Intraday"
+                                        ? "text-blue-400 border-blue-400/40"
+                                        : t.tradeType === "Swing"
+                                          ? "text-purple-400 border-purple-400/40"
+                                          : "text-orange-400 border-orange-400/40"
+                                  }`}
+                                >
+                                  {t.tradeType}
+                                </Badge>
+                              )}
                             </td>
                             <td
                               className={`py-1.5 px-3 font-bold ${
@@ -740,6 +760,9 @@ export function AnalyticsPage() {
                               >
                                 {t.source === "signal" ? "Signal" : "Manual"}
                               </Badge>
+                            </td>
+                            <td className="py-1.5 px-3 text-muted-foreground max-w-[180px] truncate text-[10px]">
+                              {t.confirmationReason ?? "—"}
                             </td>
                           </tr>
                         ))}
