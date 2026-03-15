@@ -16,8 +16,6 @@ import { SignalsPanel } from "../components/SignalsPanel";
 import { TradeChartOverlay } from "../components/TradeChartOverlay";
 import { TradePopup } from "../components/TradePopup";
 import { WatchlistPanel } from "../components/WatchlistPanel";
-import { use15MSignalEngine } from "../hooks/use15MSignalEngine";
-import { useAISignals } from "../hooks/useAISignals";
 import { useAutoTrading } from "../hooks/useAutoTrading";
 import { useCandleTimer } from "../hooks/useCandleTimer";
 import { useChartDrawings } from "../hooks/useChartDrawings";
@@ -30,6 +28,7 @@ import { useUserProfile } from "../hooks/useQueries";
 import { useSMCEngine } from "../hooks/useSMCEngine";
 import { useStrategyOptimizer } from "../hooks/useStrategyOptimizer";
 import { useTradeHistory } from "../hooks/useTradeHistory";
+import { useUnifiedSignal } from "../hooks/useUnifiedSignal";
 import { tradeStore } from "../store/tradeStore";
 import type { Drawing, DrawingPoint } from "../types/drawing";
 import type { SMCVisibility } from "../types/smc";
@@ -387,36 +386,20 @@ export function DashboardPage() {
     return "neutral";
   }, [mtf]);
 
-  const { smcData, smcContext } = useSMCEngine(
+  const { smcData, smcContext: _smcContext } = useSMCEngine(
     candleData,
     timeframe,
     mtfBias,
     selectedPrice?.price ?? 0,
   );
 
-  const optimizerWeightsRef = useRef<
-    import("../types/smc").FactorWeights | undefined
-  >(undefined);
-
-  const {
-    currentSignal,
-    history: signalHistory,
-    signalExpiresAt,
-  } = useAISignals(
-    selectedSymbol,
-    selectedPrice?.price ?? 0,
+  const { currentSignal, history: signalHistory } = useUnifiedSignal({
+    symbol: selectedSymbol,
+    price: selectedPrice?.price ?? 0,
     chartData,
-    analysis,
-    mtf,
-    overallSentiment,
-    sentimentStrength,
-    smcContext,
-    optimizerWeightsRef.current,
     timeframe,
-    scalpsToday,
     positionSize,
-    getMarketType(selectedSymbol),
-  );
+  });
 
   const {
     trades,
@@ -425,7 +408,8 @@ export function DashboardPage() {
     closeTrade,
     dailyPnl,
     dailyLossLimitHit,
-  } = useTradeHistory(signalHistory, selectedSymbol, chartData);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } = useTradeHistory(signalHistory as any, selectedSymbol, chartData);
 
   const closedTrades = useMemo(
     () => trades.filter((t) => t.status === "closed"),
@@ -433,22 +417,10 @@ export function DashboardPage() {
   );
 
   const {
-    weights: optimizerWeights,
+    weights: _optimizerWeights,
     optimizationSummary,
     dismissSummary,
   } = useStrategyOptimizer(selectedSymbol, closedTrades);
-
-  const { currentSignal: intra15mSignal, history: intra15mHistory } =
-    use15MSignalEngine({
-      symbol: selectedSymbol,
-      price: selectedPrice?.price ?? 0,
-      chartData,
-      selectedTimeframe: timeframe,
-      positionSize,
-      accountBalance: profile?.balance ?? 10000,
-    });
-
-  optimizerWeightsRef.current = optimizerWeights;
 
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
   const balance = profile?.balance ?? 10000;
@@ -520,7 +492,12 @@ export function DashboardPage() {
   }, []);
   const storeIsLimitReached = storeDailyLoss >= storeDailyLossLimit;
 
-  useAutoTrading(currentSignal, selectedPrice?.price ?? 0, selectedSymbol);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  useAutoTrading(
+    currentSignal as any,
+    selectedPrice?.price ?? 0,
+    selectedSymbol,
+  );
   useLivePnL(selectedPrice?.price ?? 0, selectedSymbol);
 
   const handlePlaceOrder = useCallback(
@@ -545,9 +522,6 @@ export function DashboardPage() {
         entryPrice: price,
         entryIndex: chartData.length - 1,
       });
-      if (currentSignal?.tradeType === "Scalp") {
-        setScalpsToday((prev) => Math.min(3, prev + 1));
-      }
     },
     [
       selectedSymbol,
@@ -555,7 +529,6 @@ export function DashboardPage() {
       openTrade,
       chartData,
       dailyLossLimitHit,
-      currentSignal,
       positionSize,
     ],
   );
@@ -659,7 +632,7 @@ export function DashboardPage() {
     onYAxisDrag: handleYAxisDrag,
     onFreePanDelta: handleFreePanDelta,
     onDoubleClick: toggleFreePanMode,
-    intra15mSignals: intra15mHistory,
+    intra15mSignals: [],
   };
 
   // Shared overlays rendered inside chart container
@@ -715,12 +688,10 @@ export function DashboardPage() {
         currentSignal={currentSignal}
         history={signalHistory}
         symbol={selectedSymbol}
-        signalExpiresAt={signalExpiresAt}
-        smcContext={smcContext}
       />
       <IntraSignalPanel
-        currentSignal={intra15mSignal}
-        history={intra15mHistory}
+        currentSignal={currentSignal}
+        history={signalHistory}
         selectedTimeframe={timeframe}
       />
       <OpenTradePanel
@@ -856,10 +827,10 @@ export function DashboardPage() {
 
       {/* ── Desktop layout — unchanged, hidden on mobile ── */}
       <div
-        className="hidden md:flex fixed left-0 right-0 bottom-0 flex-col overflow-hidden bg-background"
+        className="hidden md:flex fixed left-0 right-0 bottom-0 flex-col overflow-y-auto bg-background"
         style={{ top: "5.5rem", zIndex: 10 }}
       >
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0">
           {/* Left: Watchlist */}
           <WatchlistPanel
             collapsed={watchlistCollapsed}
@@ -870,7 +841,7 @@ export function DashboardPage() {
           />
 
           {/* Center: Chart Area */}
-          <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <main className="flex-1 flex flex-col min-w-0">
             <ChartToolbar
               symbol={selectedConfig.symbol}
               precision={selectedConfig.precision}
@@ -903,7 +874,7 @@ export function DashboardPage() {
             )}
 
             <div
-              className={`flex flex-1 overflow-hidden transition-all ${
+              className={`flex flex-1 min-h-0 transition-all ${
                 candleFlash ? "candle-flash" : ""
               }`}
             >
@@ -922,7 +893,7 @@ export function DashboardPage() {
 
           {/* Right: Sidebar */}
           <aside
-            className="hidden md:flex flex-col border-l border-border bg-background shrink-0 overflow-hidden"
+            className="hidden md:flex flex-col border-l border-border bg-background shrink-0"
             style={{ width: 300 }}
           >
             <SessionInfoStrip

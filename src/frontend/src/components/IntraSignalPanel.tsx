@@ -7,11 +7,11 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ChevronDown, ChevronUp, Clock } from "lucide-react";
 import { useState } from "react";
-import type { IntraSignal } from "../hooks/use15MSignalEngine";
+import type { UnifiedSignal } from "../utils/unifiedSignalEngine";
 
 interface IntraSignalPanelProps {
-  currentSignal: IntraSignal | null;
-  history: IntraSignal[];
+  currentSignal: UnifiedSignal | null;
+  history: UnifiedSignal[];
   selectedTimeframe: string;
 }
 
@@ -22,32 +22,34 @@ function formatPrice(value: number): string {
   return value.toFixed(5);
 }
 
-function ConfidenceBar({ value }: { value: number }) {
-  const color =
-    value >= 80
+function ConfidenceBar({
+  value,
+  label,
+}: {
+  value: number;
+  label: "High" | "Medium" | "Low";
+}) {
+  const colorBar =
+    label === "High"
       ? "bg-emerald-500"
-      : value >= 60
+      : label === "Medium"
         ? "bg-amber-400"
-        : "bg-rose-500";
+        : "bg-muted";
+  const colorText =
+    label === "High"
+      ? "text-emerald-400"
+      : label === "Medium"
+        ? "text-amber-400"
+        : "text-muted-foreground";
   return (
     <div className="space-y-0.5">
       <div className="flex justify-between items-center">
         <span className="text-[9px] text-muted-foreground uppercase tracking-wide">
           Confidence
         </span>
-        <span
-          className={`text-[10px] font-bold ${
-            value >= 80
-              ? "text-emerald-400"
-              : value >= 60
-                ? "text-amber-400"
-                : "text-rose-400"
-          }`}
-        >
-          {value}%
-        </span>
+        <span className={`text-[10px] font-bold ${colorText}`}>{label}</span>
       </div>
-      <Progress value={value} className={`h-1 ${color}`} />
+      <Progress value={value} className={`h-1 ${colorBar}`} />
     </div>
   );
 }
@@ -55,11 +57,9 @@ function ConfidenceBar({ value }: { value: number }) {
 export function IntraSignalPanel({
   currentSignal,
   history,
-  selectedTimeframe,
+  selectedTimeframe: _selectedTimeframe,
 }: IntraSignalPanelProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
-
-  const is15m = selectedTimeframe === "15m";
 
   return (
     <div data-ocid="intra_signal.panel" className="border-b border-border">
@@ -70,13 +70,13 @@ export function IntraSignalPanel({
       >
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold text-foreground uppercase tracking-widest">
-            15M Intraday Signal
+            Intraday Signal Engine
           </span>
           <Badge
             variant="outline"
             className="text-[8px] px-1 py-0 border-cyan-500/40 text-cyan-400 bg-cyan-500/10"
           >
-            15M
+            {currentSignal?.timeframe ?? "—"}
           </Badge>
         </div>
         <Clock className="w-3 h-3 text-muted-foreground" />
@@ -84,11 +84,7 @@ export function IntraSignalPanel({
 
       {/* Body */}
       <div className="px-3 pb-3 space-y-2">
-        {!is15m ? (
-          <p className="text-[10px] text-muted-foreground italic py-1">
-            Switch to 15M timeframe to activate this panel
-          </p>
-        ) : !currentSignal ? (
+        {!currentSignal ? (
           <p className="text-[10px] text-muted-foreground italic py-1">
             Scanning…
           </p>
@@ -99,27 +95,49 @@ export function IntraSignalPanel({
           >
             {/* Signal badge + time */}
             <div className="flex items-center justify-between">
-              <Badge
-                variant="outline"
-                className={`text-[11px] px-2 py-0.5 font-bold ${
-                  currentSignal.signal === "BUY"
-                    ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-400"
-                    : currentSignal.signal === "SELL"
-                      ? "bg-rose-500/15 border-rose-500/50 text-rose-400"
-                      : "bg-muted border-border text-muted-foreground"
-                }`}
-              >
-                {currentSignal.signal}
-              </Badge>
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={`text-[11px] px-2 py-0.5 font-bold ${
+                    currentSignal.signal === "BUY"
+                      ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-400"
+                      : currentSignal.signal === "SELL"
+                        ? "bg-rose-500/15 border-rose-500/50 text-rose-400"
+                        : "bg-amber-500/10 border-amber-500/40 text-amber-400"
+                  }`}
+                >
+                  {currentSignal.signal}
+                </Badge>
+                {currentSignal.timeframe && currentSignal.timeframe !== "—" && (
+                  <span className="text-[9px] font-mono font-semibold text-muted-foreground/70">
+                    — {currentSignal.timeframe}
+                  </span>
+                )}
+              </div>
               <span className="text-[9px] text-muted-foreground">
                 {currentSignal.signalTimeDisplay}
               </span>
             </div>
 
-            {currentSignal.signal === "NO TRADE" ? (
-              <p className="text-[10px] text-muted-foreground">
-                {currentSignal.noTradeReason}
-              </p>
+            {currentSignal.signal === "HOLD" ? (
+              <>
+                <p className="text-[10px] text-amber-400/80">
+                  {currentSignal.holdReason ?? "Waiting for setup"}
+                </p>
+                <div className="mt-1 text-[9px] text-muted-foreground/60 border border-border/20 rounded px-2 py-1">
+                  Market Status: Waiting for Setup
+                </div>
+                {currentSignal.timeframe && currentSignal.timeframe !== "—" && (
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[9px] text-muted-foreground">
+                      Timeframe
+                    </span>
+                    <span className="text-[9px] font-mono border border-border/40 rounded px-1.5 text-muted-foreground/80">
+                      {currentSignal.timeframe}
+                    </span>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 {/* Price levels */}
@@ -150,18 +168,41 @@ export function IntraSignalPanel({
                   </div>
                 </div>
 
-                {/* Lot size */}
+                {/* Lot size + duration */}
                 <div className="flex items-center justify-between">
                   <span className="text-[9px] text-muted-foreground">
-                    Lot Size
+                    Suggested Lot
                   </span>
                   <span className="text-[10px] font-mono text-foreground">
-                    {currentSignal.lotSize.toFixed(4)}
+                    {currentSignal.lotSize.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-muted-foreground">
+                    Est. Duration
+                  </span>
+                  <span className="text-[10px] font-mono text-foreground">
+                    {currentSignal.expectedDuration}
                   </span>
                 </div>
 
+                {/* Timeframe row */}
+                {currentSignal.timeframe && currentSignal.timeframe !== "—" && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-muted-foreground">
+                      Timeframe
+                    </span>
+                    <span className="text-[9px] font-mono border border-border/40 rounded px-1.5 text-muted-foreground/80">
+                      {currentSignal.timeframe}
+                    </span>
+                  </div>
+                )}
+
                 {/* Confidence bar */}
-                <ConfidenceBar value={currentSignal.confidence} />
+                <ConfidenceBar
+                  value={currentSignal.confidence}
+                  label={currentSignal.confidenceLabel}
+                />
 
                 {/* Reason */}
                 <p className="text-[9px] text-muted-foreground leading-relaxed">
@@ -173,7 +214,7 @@ export function IntraSignalPanel({
         )}
 
         {/* Signal history */}
-        {is15m && history.length > 0 && (
+        {history.length > 0 && (
           <Collapsible open={historyOpen} onOpenChange={setHistoryOpen}>
             <CollapsibleTrigger
               data-ocid="intra_signal.toggle"
@@ -190,36 +231,41 @@ export function IntraSignalPanel({
               <div className="mt-1.5 space-y-0.5">
                 {history.slice(0, 20).map((sig, i) => (
                   <div
-                    key={sig.signalTime}
+                    key={sig.id}
                     data-ocid={`intra_signal.item.${i + 1}`}
                     className="flex items-center justify-between py-0.5 px-1 rounded hover:bg-secondary/30 transition-colors"
                   >
                     <span className="text-[8px] text-muted-foreground font-mono">
                       {sig.signalTimeDisplay}
                     </span>
-                    <Badge
-                      variant="outline"
-                      className={`text-[8px] px-1 py-0 ${
-                        sig.signal === "BUY"
-                          ? "border-emerald-500/40 text-emerald-400"
-                          : "border-rose-500/40 text-rose-400"
-                      }`}
-                    >
-                      {sig.signal}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      <Badge
+                        variant="outline"
+                        className={`text-[8px] px-1 py-0 ${
+                          sig.signal === "BUY"
+                            ? "border-emerald-500/40 text-emerald-400"
+                            : "border-rose-500/40 text-rose-400"
+                        }`}
+                      >
+                        {sig.signal}
+                      </Badge>
+                      {sig.timeframe && sig.timeframe !== "—" && (
+                        <span className="text-[7px] font-mono text-muted-foreground/60 border border-border/40 rounded px-1">
+                          {sig.timeframe}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[8px] font-mono text-muted-foreground">
                       {formatPrice(sig.entryPrice)}
                     </span>
                     <span
                       className={`text-[8px] font-bold ${
-                        sig.confidence >= 80
+                        sig.confidenceLabel === "High"
                           ? "text-emerald-400"
-                          : sig.confidence >= 60
-                            ? "text-amber-400"
-                            : "text-rose-400"
+                          : "text-amber-400"
                       }`}
                     >
-                      {sig.confidence}%
+                      {sig.confidenceLabel}
                     </span>
                   </div>
                 ))}

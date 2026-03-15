@@ -8,13 +8,17 @@ import type { PriceState } from "../utils/priceSimulator";
 const WATCHLIST_SYMBOLS = [
   { key: "BTC/USD", label: "BTC/USDT", abbr: "BTC" },
   { key: "ETH/USD", label: "ETH/USDT", abbr: "ETH" },
-  { key: "XAUUSD", label: "XAU/USD", abbr: "XAU" },
-  { key: "EURUSD", label: "EUR/USD", abbr: "EUR" },
-  { key: "GBPUSD", label: "GBP/USD", abbr: "GBP" },
-  { key: "NAS100", label: "NAS100", abbr: "NAS" },
-  { key: "SP500", label: "S&P 500", abbr: "SPX" },
-  { key: "BNB/USD", label: "BNB/USDT", abbr: "BNB" },
   { key: "SOL/USD", label: "SOL/USDT", abbr: "SOL" },
+  { key: "EUR/USD", label: "EUR/USD", abbr: "EUR" },
+  { key: "GBP/USD", label: "GBP/USD", abbr: "GBP" },
+  { key: "USD/JPY", label: "USD/JPY", abbr: "JPY" },
+  { key: "XAU/USD", label: "XAU/USD (Gold)", abbr: "XAU" },
+  { key: "SPX", label: "S&P 500", abbr: "SPX" },
+  { key: "NDX", label: "Nasdaq 100", abbr: "NDX" },
+  { key: "NQ1!", label: "Nasdaq Futures", abbr: "NQ" },
+  { key: "ES1!", label: "S&P Futures", abbr: "ES" },
+  { key: "OIL/USD", label: "Crude Oil", abbr: "OIL" },
+  { key: "SILVER/USD", label: "Silver", abbr: "XAG" },
 ];
 
 interface WatchlistPanelProps {
@@ -70,7 +74,7 @@ export function WatchlistPanel({
         )}
         <button
           type="button"
-          data-ocid="watchlist.collapse_toggle"
+          data-ocid="watchlist.toggle"
           onClick={() => onCollapse(!collapsed)}
           className="ml-auto text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded"
           title={collapsed ? "Expand" : "Collapse"}

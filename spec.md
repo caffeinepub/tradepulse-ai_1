@@ -1,35 +1,27 @@
 # TradePulse AI
 
 ## Current State
-The platform has an existing AI signal engine (useAISignals) that generates Scalp/Intraday/Swing/Position signals using SMC + EMA + VWAP + confidence scoring. SignalsPanel displays the live signal in the right sidebar. The auto-trading hook (useAutoTrading) executes trades when confidence >= 85%. Charts support 1m, 5m, 15m, 1H, 4H, 1D, 1W, 1M timeframes.
+Two separate signal engines: aiSignalEngine.ts + useAISignals.ts drives SignalsPanel; use15MSignalEngine.ts drives IntraSignalPanel. They are independent and can contradict each other. Both are consumed in DashboardPage.tsx.
 
 ## Requested Changes (Diff)
 
 ### Add
-- `use15MSignalEngine.ts` hook: dedicated 15M intraday signal engine with strict logic:
-  - BUY: EMA20 > EMA50, price > VWAP, RSI 55–70, volume above 5-candle average
-  - SELL: EMA20 < EMA50, price < VWAP, RSI 30–45, volume above 5-candle average
-  - NO TRADE if any condition unmet
-  - Calculates: SL = 1.2×ATR, TP = entry ± (SL distance × 2), lot size = risk-based (1% balance / SL distance), Trade Confidence %
-  - Signal includes: signal type, timestamp with timezone, entry, SL, TP, lot size, confidence %, reason string
-  - Updates on every new 15M candle
-  - Stores signal history (last 50)
-- `IntraSignalPanel.tsx`: dedicated panel for 15M signals alongside existing SignalsPanel
-  - Displays signal in exact format: Signal, Signal Time, Entry Price, SL, Target, Lot Size, Trade Confidence %, Reason
-  - Shows NO TRADE state with reason when conditions unmet
-  - Signal history log (collapsible, last 20 entries)
-  - Visual badge: BUY (green), SELL (red), NO TRADE (gray)
-- Chart entry markers for 15M signals: distinct cyan/teal color triangles (vs existing yellow for AI trades)
+- `unifiedSignalEngine.ts` — Pure function using strict EMA20/50, VWAP, RSI (55-70 BUY/30-45 SELL), Volume (above 5-candle avg), ATR SL/TP. Returns BUY/SELL/HOLD with reason, entry, SL, TP, confidence, duration, lot size, timeframe badge.
+- `useUnifiedSignal.ts` — Hook with 1.5s recalculation interval. Resets on symbol/timeframe change. Maintains history.
 
 ### Modify
-- `DashboardPage.tsx`: add IntraSignalPanel to right sidebar below existing SignalsPanel
-- `ChartCanvas.tsx`: render 15M signal markers (cyan triangles) when on 15M timeframe
+- DashboardPage.tsx — Replace useAISignals + use15MSignalEngine with single useUnifiedSignal. Pass shared signal to both panels.
+- SignalsPanel.tsx — Accept UnifiedSignal type. Remove Scalp badge. Show HOLD reason + timeframe badge.
+- IntraSignalPanel.tsx — Accept UnifiedSignal type. Remove 5m/15m-only gating. Show HOLD reason + timeframe badge.
 
 ### Remove
-- Nothing removed
+- Scalp signal type from engine output (only Intraday/Swing/HOLD produced)
+- Old hooks still exist in files but are no longer called from DashboardPage
 
 ## Implementation Plan
-1. Create `use15MSignalEngine.ts` with full indicator calculation (EMA, VWAP, RSI, ATR, volume avg) and signal logic
-2. Create `IntraSignalPanel.tsx` with formatted signal display and collapsible history
-3. Wire `use15MSignalEngine` into DashboardPage and pass data to IntraSignalPanel
-4. Pass 15M signal markers to ChartCanvas for visual rendering when timeframe is 15m
+1. Create unifiedSignalEngine.ts with UnifiedSignal type and pure computation
+2. Create useUnifiedSignal.ts hook with 1.5s interval and reset logic
+3. Update SignalsPanel.tsx to accept UnifiedSignal
+4. Update IntraSignalPanel.tsx to accept UnifiedSignal
+5. Update DashboardPage.tsx to use useUnifiedSignal
+6. Validate build

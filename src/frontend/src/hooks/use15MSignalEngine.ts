@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 export interface IntraSignal {
-  signal: "BUY" | "SELL" | "NO TRADE";
+  signal: "BUY" | "SELL" | "HOLD";
   signalTime: string;
   signalTimeDisplay: string;
   entryPrice: number;
@@ -9,8 +9,11 @@ export interface IntraSignal {
   targetPrice: number;
   lotSize: number;
   confidence: number;
+  confidenceLabel: "High" | "Medium";
   reason: string;
-  noTradeReason?: string;
+  holdReason?: string;
+  expectedDuration: string;
+  timeframe: string;
 }
 
 // ── Pure indicator functions ──────────────────────────────────────────────────
@@ -62,13 +65,56 @@ function calcVolume(data: { price: number; time: string }[]): number[] {
   });
 }
 
+function estimateDuration(
+  atr: number,
+  price: number,
+  volRatio: number,
+  isBullish: boolean,
+  rsi: number,
+): string {
+  const atrPct = price > 0 ? atr / price : 0;
+  // Determine momentum strength
+  const strongMomentum =
+    atrPct > 0.003 &&
+    volRatio > 1.3 &&
+    ((isBullish && rsi >= 62) || (!isBullish && rsi <= 38));
+  const moderateMomentum = atrPct > 0.0015 || volRatio > 1.2;
+
+  if (strongMomentum) {
+    const mins = 30 + Math.round(Math.random() * 15);
+    return `~${mins} min`;
+  }
+  if (moderateMomentum) {
+    const mins = 60 + Math.round(Math.random() * 30);
+    return `~${mins} min`;
+  }
+  // Low ATR / weak momentum
+  const mins = 90 + Math.round(Math.random() * 30);
+  return `~${Math.min(mins, 120)} min`;
+}
+
 // ── Signal computation ────────────────────────────────────────────────────────
+
+function normalizeTimeframeLabel(tf?: string): string {
+  if (!tf) return "—";
+  const map: Record<string, string> = {
+    "1m": "1M",
+    "5m": "5M",
+    "15m": "15M",
+    "1h": "1H",
+    "4h": "4H",
+    "1d": "1D",
+    "1w": "1W",
+    "1mo": "1MO",
+  };
+  return map[tf.toLowerCase()] ?? tf.toUpperCase();
+}
 
 function computeSignal(
   price: number,
   chartData: { price: number; time: string }[],
   positionSize: number,
-  accountBalance: number,
+  selectedTimeframe: string,
 ): IntraSignal {
   const now = new Date();
   const signalTime = now.toISOString();
@@ -80,7 +126,7 @@ function computeSignal(
 
   if (prices.length < 20) {
     return {
-      signal: "NO TRADE",
+      signal: "HOLD",
       signalTime,
       signalTimeDisplay,
       entryPrice: price,
@@ -88,8 +134,11 @@ function computeSignal(
       targetPrice: price,
       lotSize: positionSize,
       confidence: 0,
+      confidenceLabel: "Medium",
       reason: "Insufficient data",
-      noTradeReason: "Not enough candle history to compute indicators",
+      holdReason: "Not enough candle history to compute indicators",
+      expectedDuration: "—",
+      timeframe: normalizeTimeframeLabel(selectedTimeframe),
     };
   }
 
@@ -112,6 +161,10 @@ function computeSignal(
   const priceAboveVwap = price > vwap;
   const priceBelowVwap = price < vwap;
   const volConfirm = lastVol > avgVol5;
+  const vwapDiffPct = price > 0 ? Math.abs(price - vwap) / price : 0;
+  const nearVwap = vwapDiffPct < 0.001;
+  const emaGapPct = price > 0 ? Math.abs(lastEma20 - lastEma50) / price : 0;
+  const emasTooClose = emaGapPct < 0.0005;
 
   const buyConditions =
     isBullTrend && priceAboveVwap && rsi >= 55 && rsi <= 70 && volConfirm;
@@ -119,19 +172,24 @@ function computeSignal(
     isBearTrend && priceBelowVwap && rsi >= 30 && rsi <= 45 && volConfirm;
 
   if (!buyConditions && !sellConditions) {
-    // Determine best hold reason
-    let noTradeReason = "Conditions not aligned";
-    if (!isBullTrend && !isBearTrend)
-      noTradeReason = "Trend unclear — EMAs converging";
-    else if (!volConfirm)
-      noTradeReason = "Volume below average — no confirmation";
-    else if (rsi > 70 || rsi < 30) noTradeReason = "RSI outside signal range";
-    else if (!priceAboveVwap && !priceBelowVwap)
-      noTradeReason = "Price at VWAP — no directional bias";
-    else noTradeReason = "No SMC confirmation — waiting for setup";
+    // Pick the most specific HOLD reason
+    let holdReason = "Conditions not aligned";
+    if (emasTooClose || (!isBullTrend && !isBearTrend)) {
+      holdReason = "Trend unclear";
+    } else if (!volConfirm) {
+      holdReason = "Volume confirmation missing";
+    } else if (isBullTrend && (rsi < 55 || rsi > 70)) {
+      holdReason = "RSI not in valid range";
+    } else if (isBearTrend && (rsi < 30 || rsi > 45)) {
+      holdReason = "RSI not in valid range";
+    } else if (nearVwap) {
+      holdReason = "Price near VWAP with no momentum";
+    } else {
+      holdReason = "Trend unclear";
+    }
 
     return {
-      signal: "NO TRADE",
+      signal: "HOLD",
       signalTime,
       signalTimeDisplay,
       entryPrice: price,
@@ -139,37 +197,50 @@ function computeSignal(
       targetPrice: price,
       lotSize: positionSize,
       confidence: 0,
+      confidenceLabel: "Medium",
       reason: "Conditions not fully met",
-      noTradeReason,
+      holdReason,
+      expectedDuration: "—",
+      timeframe: normalizeTimeframeLabel(selectedTimeframe),
     };
   }
 
-  const dir = buyConditions ? "BUY" : "SELL";
+  const dir: "BUY" | "SELL" = buyConditions ? "BUY" : "SELL";
   const slDist = 1.2 * atr;
   const stopLoss = dir === "BUY" ? price - slDist : price + slDist;
   const targetPrice = dir === "BUY" ? price + slDist * 2 : price - slDist * 2;
 
-  // Lot size: risk 1% of balance / SL distance
-  const rawLot = slDist > 0 ? (accountBalance * 0.01) / slDist : positionSize;
+  // Lot size: $5 risk / SL distance, clamped 0.01–0.05
+  const rawLot = slDist > 0 ? 5 / slDist : positionSize;
   const lotSize = Math.min(
-    Math.max(Number.parseFloat(rawLot.toFixed(4)), 0.01),
-    10,
+    Math.max(Number.parseFloat(rawLot.toFixed(2)), 0.01),
+    0.05,
   );
 
   // Confidence
   let confidence = 60;
-  const emaGapPct = Math.abs(lastEma20 - lastEma50) / price;
   if (emaGapPct > 0.001) confidence += 10;
   if (dir === "BUY" && rsi >= 60 && rsi <= 65) confidence += 10;
   if (dir === "SELL" && rsi >= 33 && rsi <= 40) confidence += 10;
-  if (lastVol > avgVol5 * 1.5) confidence += 10;
+  const volRatio = avgVol5 > 0 ? lastVol / avgVol5 : 1;
+  if (volRatio >= 1.5) confidence += 10;
   if (atr > 0.002 * price) confidence += 10;
   confidence = Math.min(confidence, 95);
+  const confidenceLabel: "High" | "Medium" =
+    confidence >= 80 ? "High" : "Medium";
 
   const reason =
     dir === "BUY"
       ? `EMA20 > EMA50 (bullish), price above VWAP, RSI ${rsi.toFixed(1)}, volume confirmed`
       : `EMA20 < EMA50 (bearish), price below VWAP, RSI ${rsi.toFixed(1)}, volume confirmed`;
+
+  const expectedDuration = estimateDuration(
+    atr,
+    price,
+    volRatio,
+    dir === "BUY",
+    rsi,
+  );
 
   return {
     signal: dir,
@@ -180,7 +251,10 @@ function computeSignal(
     targetPrice: Number.parseFloat(targetPrice.toFixed(5)),
     lotSize,
     confidence,
+    confidenceLabel,
     reason,
+    expectedDuration,
+    timeframe: normalizeTimeframeLabel(selectedTimeframe),
   };
 }
 
@@ -192,7 +266,7 @@ export function use15MSignalEngine({
   chartData,
   selectedTimeframe,
   positionSize = 0.01,
-  accountBalance = 10000,
+  accountBalance: _accountBalance = 10000,
 }: {
   symbol: string;
   price: number;
@@ -215,27 +289,29 @@ export function use15MSignalEngine({
   }, [symbol]);
 
   useEffect(() => {
-    if (selectedTimeframe !== "15m") {
+    if (selectedTimeframe !== "5m" && selectedTimeframe !== "15m") {
       setCurrentSignal(null);
       return;
     }
 
     const evaluate = () => {
       if (price <= 0 || chartData.length < 20) return;
-      const sig = computeSignal(price, chartData, positionSize, accountBalance);
+      const sig = computeSignal(
+        price,
+        chartData,
+        positionSize,
+        selectedTimeframe,
+      );
       setCurrentSignal(sig);
-      if (sig.signal !== "NO TRADE") {
-        setHistory((prev) => {
-          const next = [sig, ...prev].slice(0, 50);
-          return next;
-        });
+      if (sig.signal !== "HOLD") {
+        setHistory((prev) => [sig, ...prev].slice(0, 50));
       }
     };
 
     evaluate();
     const id = setInterval(evaluate, 15_000);
     return () => clearInterval(id);
-  }, [selectedTimeframe, price, chartData, positionSize, accountBalance]);
+  }, [selectedTimeframe, price, chartData, positionSize]);
 
   return { currentSignal, history };
 }

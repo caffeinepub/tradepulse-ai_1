@@ -17,46 +17,30 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { SMCSignalContext } from "../types/smc";
-import type { AISignal } from "../utils/aiSignalEngine";
-import { getContextualHoldMessage } from "../utils/aiSignalEngine";
+import type { UnifiedSignal } from "../utils/unifiedSignalEngine";
 
 interface SignalsPanelProps {
-  currentSignal: AISignal | null;
-  history: AISignal[];
+  currentSignal: UnifiedSignal | null;
+  history: UnifiedSignal[];
   symbol: string;
-  scalpsToday?: number;
-  signalExpiresAt?: number | null;
-  smcContext?: SMCSignalContext;
 }
 
-function TradeTypeBadge({
-  type,
-  scalpsToday,
-}: {
-  type: AISignal["tradeType"];
-  scalpsToday?: number;
-}) {
-  const map = {
-    Scalp: "bg-amber-500/15 border-amber-500/40 text-amber-400",
+function TradeTypeBadge({ type }: { type: UnifiedSignal["tradeType"] }) {
+  const map: Record<string, string> = {
     Intraday: "bg-blue-500/15 border-blue-500/40 text-blue-400",
     Swing: "bg-purple-500/15 border-purple-500/40 text-purple-400",
-    Position: "bg-emerald-500/15 border-emerald-500/40 text-emerald-400",
   };
   return (
     <Badge
       variant="outline"
-      className={`text-[9px] px-1.5 py-0 border ${map[type]}`}
+      className={`text-[9px] px-1.5 py-0 border ${map[type] ?? ""}`}
     >
       {type}
-      {type === "Scalp" && scalpsToday !== undefined && scalpsToday > 0 && (
-        <span className="ml-1 opacity-70">({scalpsToday}/3)</span>
-      )}
     </Badge>
   );
 }
 
-function SignalBadge({ signal }: { signal: AISignal["signal"] }) {
+function SignalBadge({ signal }: { signal: UnifiedSignal["signal"] }) {
   const classes =
     signal === "BUY"
       ? "bg-buy border-buy text-buy font-bold"
@@ -70,7 +54,7 @@ function SignalBadge({ signal }: { signal: AISignal["signal"] }) {
   );
 }
 
-function TrendIcon({ trend }: { trend: AISignal["trend"] }) {
+function TrendIcon({ trend }: { trend: UnifiedSignal["trend"] }) {
   if (trend === "Bullish")
     return <TrendingUp className="w-3.5 h-3.5 text-buy" />;
   if (trend === "Bearish")
@@ -80,6 +64,13 @@ function TrendIcon({ trend }: { trend: AISignal["trend"] }) {
 
 function formatTime(date: Date): string {
   return date.toTimeString().slice(0, 8);
+}
+
+function formatPrice(value: number): string {
+  if (value === 0) return "—";
+  if (value > 1000) return value.toFixed(2);
+  if (value > 10) return value.toFixed(4);
+  return value.toFixed(5);
 }
 
 function useSecondsAgo(timestamp: Date | null): number {
@@ -93,39 +84,6 @@ function useSecondsAgo(timestamp: Date | null): number {
     return () => clearInterval(id);
   }, [timestamp]);
   return seconds;
-}
-
-function useExpiryCountdown(expiresAt: number | null): {
-  display: string;
-  pct: number;
-  expired: boolean;
-} {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!expiresAt) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [expiresAt]);
-
-  if (!expiresAt) return { display: "", pct: 100, expired: false };
-  const remaining = expiresAt - now;
-  if (remaining <= 0) return { display: "Expired", pct: 0, expired: true };
-
-  const totalMs = expiresAt - (now - (now % 1000));
-  const pct = Math.max(0, Math.min(100, (remaining / totalMs) * 100));
-
-  const hours = Math.floor(remaining / 3_600_000);
-  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
-  const secs = Math.floor((remaining % 60_000) / 1000);
-
-  let display: string;
-  if (hours > 0) {
-    display = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-  } else {
-    display = `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  }
-
-  return { display, pct, expired: false };
 }
 
 function playBeep(freq = 880, duration = 0.15) {
@@ -150,16 +108,8 @@ export function SignalsPanel({
   currentSignal,
   history,
   symbol,
-  scalpsToday,
-  signalExpiresAt,
-  smcContext,
 }: SignalsPanelProps) {
   const secondsAgo = useSecondsAgo(currentSignal?.timestamp ?? null);
-  const {
-    display: expiryDisplay,
-    pct: expiryPct,
-    expired: isExpired,
-  } = useExpiryCountdown(signalExpiresAt ?? null);
   const prevSignalIdRef = useRef<string | null>(null);
   const [flashBorder, setFlashBorder] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
@@ -168,12 +118,9 @@ export function SignalsPanel({
 
   const isHoldOrNull = !currentSignal || currentSignal.signal === "HOLD";
 
-  const contextualMessage = getContextualHoldMessage(smcContext);
-
-  // The specific hold reason from the AI engine
   const holdReason =
     currentSignal?.holdReason ??
-    currentSignal?.confirmationReason ??
+    currentSignal?.reason ??
     "Scanning for setup...";
 
   // Alert system: detect new signals
@@ -187,28 +134,15 @@ export function SignalsPanel({
     const isNew = prevSignalIdRef.current !== null;
     prevSignalIdRef.current = currentSignal.id;
     if (!isNew) return;
-
-    if (currentSignal.tradeType === "Scalp") {
-      playBeep(880, 0.15);
-      setFlashBorder(true);
-      setTimeout(() => setFlashBorder(false), 1200);
-    } else if (soundEnabled) {
+    if (soundEnabled) {
       playBeep(660, 0.1);
-      setNotifDot(true);
-      setTimeout(() => setNotifDot(false), 4000);
-    } else {
-      setNotifDot(true);
-      setTimeout(() => setNotifDot(false), 4000);
+      setTimeout(() => playBeep(880, 0.15), 180);
     }
+    setNotifDot(true);
+    setFlashBorder(true);
+    setTimeout(() => setFlashBorder(false), 1200);
+    setTimeout(() => setNotifDot(false), 4000);
   }, [currentSignal, soundEnabled]);
-
-  const expiryColor = isExpired
-    ? "text-sell"
-    : expiryPct > 50
-      ? "text-buy"
-      : expiryPct > 25
-        ? "text-amber-400"
-        : "text-sell";
 
   return (
     <div
@@ -224,7 +158,7 @@ export function SignalsPanel({
             className={`w-2 h-2 rounded-full shrink-0 ${
               isHoldOrNull
                 ? "bg-amber-400 animate-pulse"
-                : "bg-buy animate-pulse-green"
+                : "bg-buy animate-pulse"
             }`}
             style={{
               boxShadow: isHoldOrNull
@@ -238,7 +172,7 @@ export function SignalsPanel({
           {notifDot && (
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
           )}
-          <span className="ml-auto text-[9px] text-muted-foreground font-mono-num">
+          <span className="ml-auto text-[9px] text-muted-foreground font-mono">
             {symbol}
           </span>
           <button
@@ -246,9 +180,7 @@ export function SignalsPanel({
             data-ocid="signals.sound_toggle"
             onClick={() => setSoundEnabled((v) => !v)}
             className="ml-1 text-muted-foreground hover:text-foreground transition-colors"
-            title={
-              soundEnabled ? "Mute non-scalp alerts" : "Enable non-scalp alerts"
-            }
+            title={soundEnabled ? "Mute alerts" : "Enable alerts"}
           >
             {soundEnabled ? (
               <Bell className="w-3 h-3" />
@@ -258,13 +190,12 @@ export function SignalsPanel({
           </button>
         </div>
 
-        {/* ── HOLD State ── */}
+        {/* HOLD State */}
         {isHoldOrNull ? (
           <div
             data-ocid="signals.hold_card"
             className="rounded p-3 terminal-border border-l-2 border-l-amber-500/40"
           >
-            {/* HOLD label + pulsing dot */}
             <div className="flex items-center gap-2.5 mb-1.5">
               <div
                 className="w-3 h-3 rounded-full bg-amber-400 animate-pulse shrink-0"
@@ -273,26 +204,30 @@ export function SignalsPanel({
               <span className="font-display font-bold text-xl leading-none text-amber-400 tracking-wider">
                 HOLD
               </span>
+              {currentSignal?.timeframe && currentSignal.timeframe !== "—" && (
+                <span className="text-[9px] font-mono text-muted-foreground/60 ml-1">
+                  — {currentSignal.timeframe}
+                </span>
+              )}
             </div>
-
-            {/* Hold reason from AI engine */}
             <p
               data-ocid="signals.hold_reason"
               className="text-xs text-muted-foreground mt-1 mb-1.5 italic leading-tight"
             >
-              {isHoldOrNull && currentSignal ? holdReason : contextualMessage}
+              {holdReason}
             </p>
-
-            {/* AI monitoring */}
-            <p className="text-[8px] text-muted-foreground/50">
+            <div className="mt-2 text-[9px] text-muted-foreground/60 border border-border/20 rounded px-2 py-1">
+              Market Status: Waiting for Setup
+            </div>
+            <p className="text-[8px] text-muted-foreground/50 mt-1">
               AI monitoring{" "}
-              <span className="font-mono-num text-muted-foreground/70">
+              <span className="font-mono text-muted-foreground/70">
                 {symbol}
               </span>
             </p>
           </div>
         ) : (
-          /* ── BUY/SELL State ── */
+          /* BUY/SELL State */
           <div
             data-ocid="signals.live_card"
             className={`rounded p-2.5 terminal-border ${
@@ -311,12 +246,14 @@ export function SignalsPanel({
                 >
                   {currentSignal.signal}
                 </span>
+                {currentSignal.timeframe && currentSignal.timeframe !== "—" && (
+                  <span className="text-[9px] font-mono font-semibold text-muted-foreground/70 tracking-wide">
+                    — {currentSignal.timeframe}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1">
-                <TradeTypeBadge
-                  type={currentSignal.tradeType}
-                  scalpsToday={scalpsToday}
-                />
+                <TradeTypeBadge type={currentSignal.tradeType} />
                 <Badge
                   variant="outline"
                   className="text-[9px] border-border text-muted-foreground/60 px-1.5 py-0"
@@ -333,10 +270,10 @@ export function SignalsPanel({
                   Confidence
                 </span>
                 <span
-                  className={`font-mono-num text-[10px] font-semibold ${
-                    currentSignal.confidence >= 70
+                  className={`font-mono text-[10px] font-semibold ${
+                    currentSignal.confidence >= 85
                       ? "text-buy"
-                      : currentSignal.confidence >= 55
+                      : currentSignal.confidence >= 70
                         ? "text-foreground"
                         : "text-sell"
                   }`}
@@ -350,58 +287,6 @@ export function SignalsPanel({
                 style={{ background: "oklch(0.16 0.012 240)" }}
               />
             </div>
-
-            {/* Confidence Breakdown */}
-            {currentSignal.confidenceBreakdown && (
-              <div className="mb-2 space-y-0.5">
-                {(
-                  [
-                    ["Trend", currentSignal.confidenceBreakdown.trendAlignment],
-                    [
-                      "Indicators",
-                      currentSignal.confidenceBreakdown.indicatorConfluence,
-                    ],
-                    [
-                      "Volume",
-                      currentSignal.confidenceBreakdown.volumeConfirmation,
-                    ],
-                    [
-                      "Structure",
-                      currentSignal.confidenceBreakdown.structureSignals,
-                    ],
-                  ] as [string, number][]
-                ).map(([label, val]) => (
-                  <div key={label} className="flex items-center gap-1.5">
-                    <span className="text-[8px] text-muted-foreground w-14 shrink-0">
-                      {label}
-                    </span>
-                    <div
-                      className="flex-1 rounded-full overflow-hidden"
-                      style={{
-                        height: "3px",
-                        background: "oklch(0.16 0.012 240)",
-                      }}
-                    >
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${(val / 25) * 100}%`,
-                          background:
-                            val >= 18
-                              ? "oklch(0.72 0.18 145)"
-                              : val >= 10
-                                ? "oklch(0.72 0.18 60)"
-                                : "oklch(0.52 0.01 220)",
-                        }}
-                      />
-                    </div>
-                    <span className="text-[8px] font-mono-num text-muted-foreground w-4 text-right">
-                      {val}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {/* Trend */}
             <div className="flex items-center gap-1 mb-2">
@@ -419,76 +304,61 @@ export function SignalsPanel({
               </span>
             </div>
 
-            {/* Price grid */}
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px]">
+            {/* Price levels */}
+            <div
+              className="grid gap-x-3 gap-y-1 text-[10px] mb-2"
+              style={{ gridTemplateColumns: "repeat(2, 1fr)" }}
+            >
               <div>
                 <div className="text-muted-foreground">Entry</div>
-                <div className="font-mono-num text-foreground font-medium">
-                  {currentSignal.entryPrice.toFixed(
-                    currentSignal.entryPrice > 100 ? 2 : 5,
-                  )}
+                <div className="font-mono text-cyan-400 font-medium">
+                  {formatPrice(currentSignal.entryPrice)}
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">Stop Loss</div>
-                <div className="font-mono-num text-sell font-medium">
-                  {currentSignal.stopLoss.toFixed(
-                    currentSignal.stopLoss > 100 ? 2 : 5,
-                  )}
+                <div className="font-mono text-sell font-medium">
+                  {formatPrice(currentSignal.stopLoss)}
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">TP1</div>
-                <div className="font-mono-num text-buy font-medium">
-                  {currentSignal.tp1.toFixed(currentSignal.tp1 > 100 ? 2 : 5)}
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">R:R</div>
-                <div className="font-mono-num text-foreground font-medium">
-                  1:{currentSignal.riskReward.toFixed(2)}
+                <div className="font-mono text-buy font-medium">
+                  {formatPrice(currentSignal.tp1)}
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">TP2</div>
-                <div className="font-mono-num text-buy font-medium">
-                  {currentSignal.tp2.toFixed(currentSignal.tp2 > 100 ? 2 : 5)}
+                <div className="font-mono text-buy font-medium">
+                  {formatPrice(currentSignal.tp2)}
                 </div>
               </div>
               <div>
-                <div className="text-muted-foreground">TP3</div>
-                <div className="font-mono-num text-buy font-medium">
-                  {currentSignal.tp3.toFixed(currentSignal.tp3 > 100 ? 2 : 5)}
+                <div className="text-muted-foreground">R:R</div>
+                <div className="font-mono text-foreground font-medium">
+                  1:{currentSignal.riskReward.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Lot Size</div>
+                <div className="font-mono text-foreground font-medium">
+                  {currentSignal.lotSize.toFixed(2)}
                 </div>
               </div>
             </div>
 
-            {/* Confirmation reason */}
-            {currentSignal.confirmationReason && (
+            {/* Reason */}
+            {currentSignal.reason && (
               <div className="mt-2 text-[9px] text-muted-foreground/70 italic leading-tight border-t border-border/30 pt-1.5">
-                {currentSignal.confirmationReason}
+                {currentSignal.reason}
               </div>
             )}
 
-            {/* Updated + Expiry row */}
+            {/* Updated row */}
             <div className="mt-1.5 flex items-center justify-between">
               <span className="text-[9px] text-muted-foreground">
                 Updated {secondsAgo}s ago
               </span>
-              {expiryDisplay && (
-                <div className="flex items-center gap-1">
-                  <span className="text-[9px] text-muted-foreground/60">
-                    Expires in
-                  </span>
-                  <span
-                    className={`font-mono-num text-[9px] font-semibold ${
-                      expiryColor
-                    }`}
-                  >
-                    {expiryDisplay}
-                  </span>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -544,7 +414,12 @@ export function SignalsPanel({
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1">
                           <SignalBadge signal={sig.signal} />
-                          <span className="font-mono-num text-muted-foreground">
+                          {sig.timeframe && sig.timeframe !== "—" && (
+                            <span className="text-[8px] font-mono text-muted-foreground/60 border border-border/40 rounded px-1">
+                              {sig.timeframe}
+                            </span>
+                          )}
+                          <span className="font-mono text-muted-foreground">
                             {formatTime(sig.timestamp)}
                           </span>
                         </div>
@@ -564,29 +439,27 @@ export function SignalsPanel({
                           <TradeTypeBadge type={sig.tradeType} />
                         </div>
                       </div>
-                      <div className="flex items-center justify-between font-mono-num">
+                      <div className="flex items-center justify-between font-mono">
                         <span className="text-muted-foreground">
                           E:{" "}
                           <span className="text-foreground">
-                            {sig.entryPrice.toFixed(
-                              sig.entryPrice > 100 ? 2 : 5,
-                            )}
+                            {formatPrice(sig.entryPrice)}
                           </span>
                         </span>
                         <span className="text-muted-foreground">
                           SL:{" "}
                           <span className="text-sell">
-                            {sig.stopLoss.toFixed(sig.stopLoss > 100 ? 2 : 5)}
+                            {formatPrice(sig.stopLoss)}
                           </span>
                         </span>
                         <span className="text-muted-foreground">
                           TP1:{" "}
                           <span className="text-buy">
-                            {sig.tp1.toFixed(sig.tp1 > 100 ? 2 : 5)}
+                            {formatPrice(sig.tp1)}
                           </span>
                         </span>
                       </div>
-                      <div className="flex items-center justify-between font-mono-num">
+                      <div className="flex items-center justify-between font-mono">
                         <span className="text-muted-foreground">
                           RR:{" "}
                           <span className="text-foreground">
@@ -595,9 +468,9 @@ export function SignalsPanel({
                         </span>
                         <span
                           className={`${
-                            sig.confidence >= 70
+                            sig.confidence >= 85
                               ? "text-buy"
-                              : sig.confidence >= 55
+                              : sig.confidence >= 70
                                 ? "text-foreground"
                                 : "text-sell"
                           }`}

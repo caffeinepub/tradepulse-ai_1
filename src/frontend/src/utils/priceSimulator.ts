@@ -49,6 +49,14 @@ export const SYMBOLS: SymbolConfig[] = [
     volatility: 0.0004,
   },
   {
+    symbol: "USD/JPY",
+    name: "Dollar / Yen",
+    basePrice: 149.5,
+    category: "forex",
+    precision: 3,
+    volatility: 0.0003,
+  },
+  {
     symbol: "XAU/USD",
     name: "Gold",
     basePrice: 2380,
@@ -109,6 +117,7 @@ export const SYMBOLS: SymbolConfig[] = [
 export const TWELVE_DATA_SYMBOL_MAP: Record<string, string> = {
   "EUR/USD": "EUR/USD",
   "GBP/USD": "GBP/USD",
+  "USD/JPY": "USD/JPY",
   "XAU/USD": "XAU/USD",
   SPX: "SPX",
   NDX: "NDX",

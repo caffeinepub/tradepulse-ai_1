@@ -27,6 +27,7 @@ export interface AISignal {
   expectedDuration: string;
   positionSize: number;
   timestamp: Date;
+  timeframe: string;
 }
 
 function ema(prices: number[], period: number): number {
@@ -167,7 +168,7 @@ export type MarketType =
 
 export function getMarketType(symbol: string): MarketType {
   if (["BTC/USD", "ETH/USD", "SOL/USD"].includes(symbol)) return "crypto";
-  if (["EUR/USD", "GBP/USD"].includes(symbol)) return "forex";
+  if (["EUR/USD", "GBP/USD", "USD/JPY"].includes(symbol)) return "forex";
   if (["SPX", "NDX"].includes(symbol)) return "indices";
   if (["NQ1!", "ES1!"].includes(symbol)) return "futures";
   if (["OIL/USD", "SILVER/USD"].includes(symbol)) return "commodities";
@@ -193,6 +194,21 @@ function isNearSessionOpen(): boolean {
   const nearLSE = totalMin >= 420 && totalMin <= 540;
   const nearNYSE = totalMin >= 750 && totalMin <= 870;
   return nearLSE || nearNYSE;
+}
+
+function normalizeTimeframeLabel(tf?: string): string {
+  if (!tf) return "—";
+  const map: Record<string, string> = {
+    "1m": "1M",
+    "5m": "5M",
+    "15m": "15M",
+    "1h": "1H",
+    "4h": "4H",
+    "1d": "1D",
+    "1w": "1W",
+    "1mo": "1MO",
+  };
+  return map[tf.toLowerCase()] ?? tf.toUpperCase();
 }
 
 function buildHoldSignal(
@@ -237,6 +253,7 @@ function buildHoldSignal(
     holdReason,
     expectedDuration: "—",
     positionSize: positionSize ?? lotSize,
+    timeframe: normalizeTimeframeLabel(selectedTimeframe),
     timestamp: new Date(),
   };
 }
@@ -661,6 +678,7 @@ export function generateSignal(
     holdReason: signalType === "HOLD" ? pendingHoldReason : undefined,
     expectedDuration,
     positionSize: lotSize,
+    timeframe: normalizeTimeframeLabel(selectedTimeframe),
     timestamp: new Date(),
   };
 }

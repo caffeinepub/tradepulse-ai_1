@@ -1332,7 +1332,7 @@ export function ChartCanvas({
         p.selectedTimeframe === "15m"
       ) {
         for (const sig of signals15m) {
-          if (sig.signal === "NO TRADE") continue;
+          if (sig.signal === "HOLD") continue;
           const sigPrice = sig.entryPrice;
           const sy = mapY(sigPrice, pMin, pMax, PT, PB);
           if (sy < PT || sy > PB) continue;

@@ -4,10 +4,10 @@
  * Falls back silently to simulated prices on connection errors.
  */
 
+import { TWELVE_DATA_API_KEY } from "../marketConfig";
 import { SYMBOLS, TWELVE_DATA_SYMBOL_MAP, priceStates } from "./priceSimulator";
 
-const TWELVE_DATA_API_KEY = "demo"; // Replace with real key from twelvedata.com
-
+// Crypto symbols are handled by Binance WebSocket, not Twelve Data
 const CRYPTO_SYMBOLS = new Set(["BTC/USD", "ETH/USD", "SOL/USD"]);
 
 let ws: WebSocket | null = null;
