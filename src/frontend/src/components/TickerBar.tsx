@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   type PriceState,
   SYMBOLS,
+  fetchLiveBinancePrices,
+  fetchLiveMetalPrices,
   getPriceState,
   updatePrices,
 } from "../utils/priceSimulator";
@@ -26,6 +28,36 @@ export function TickerBar() {
     }),
   );
 
+  // Fetch real prices on mount so ticker shows accurate Gold / Crypto prices
+  useEffect(() => {
+    fetchLiveBinancePrices().then(() => {
+      setItems(
+        SYMBOLS.map((s) => {
+          const state = getPriceState(s.symbol);
+          return {
+            symbol: s.symbol,
+            price: state.price,
+            changePercent: state.changePercent,
+            precision: s.precision,
+          };
+        }),
+      );
+    });
+    fetchLiveMetalPrices().then(() => {
+      setItems(
+        SYMBOLS.map((s) => {
+          const state = getPriceState(s.symbol);
+          return {
+            symbol: s.symbol,
+            price: state.price,
+            changePercent: state.changePercent,
+            precision: s.precision,
+          };
+        }),
+      );
+    });
+  }, []);
+
   useEffect(() => {
     const interval = setInterval(() => {
       updatePrices();
@@ -41,6 +73,26 @@ export function TickerBar() {
         }),
       );
     }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Re-fetch metal prices every 10s to keep Gold/Silver accurate in ticker
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchLiveMetalPrices().then(() => {
+        setItems(
+          SYMBOLS.map((s) => {
+            const state = getPriceState(s.symbol);
+            return {
+              symbol: s.symbol,
+              price: state.price,
+              changePercent: state.changePercent,
+              precision: s.precision,
+            };
+          }),
+        );
+      });
+    }, 10_000);
     return () => clearInterval(interval);
   }, []);
 

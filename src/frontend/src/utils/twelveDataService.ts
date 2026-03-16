@@ -5,6 +5,7 @@
  */
 
 import { TWELVE_DATA_API_KEY } from "../marketConfig";
+import { fetchMetalsLivePrice } from "./metalsService";
 import { SYMBOLS, TWELVE_DATA_SYMBOL_MAP, priceStates } from "./priceSimulator";
 
 // Crypto symbols are handled by Binance WebSocket, not Twelve Data
@@ -21,11 +22,45 @@ const CRYPTO_SYMBOLS = new Set([
   "DOT/USD",
 ]);
 
+// Metals pairs use metals.live API instead of Twelve Data
+const METALS_PAIRS = new Set(["XAU/USD", "XAG/USD"]);
+
 let ws: WebSocket | null = null;
 let activeSymbol: string | null = null;
 let priceCallback: ((price: number) => void) | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let intentionalClose = false;
+let metalsStopPolling: (() => void) | null = null;
+
+function startMetalsLivePolling(
+  pair: "XAU/USD" | "XAG/USD",
+  onPrice: (price: number) => void,
+): void {
+  if (metalsStopPolling) {
+    metalsStopPolling();
+    metalsStopPolling = null;
+  }
+  const poll = async () => {
+    const price = await fetchMetalsLivePrice(pair);
+    if (price > 0) {
+      const current = priceStates.get(pair);
+      if (current) {
+        priceStates.set(pair, {
+          ...current,
+          price,
+          high24h: Math.max(current.high24h, price),
+          low24h: Math.min(current.low24h, price),
+        });
+      }
+      const config = SYMBOLS.find((s) => s.symbol === pair);
+      if (config) config.basePrice = price;
+      onPrice(price);
+    }
+  };
+  poll();
+  const timer = setInterval(poll, 5000);
+  metalsStopPolling = () => clearInterval(timer);
+}
 
 function getTwelveDataSymbol(internalSymbol: string): string | null {
   return TWELVE_DATA_SYMBOL_MAP[internalSymbol] ?? null;
@@ -46,6 +81,12 @@ export function connectTwelveData(
 ): void {
   // Crypto uses Binance — skip
   if (CRYPTO_SYMBOLS.has(symbol)) return;
+
+  // Metals (XAU/USD, XAG/USD) use metals.live — skip Twelve Data WebSocket
+  if (METALS_PAIRS.has(symbol)) {
+    startMetalsLivePolling(symbol as "XAU/USD" | "XAG/USD", onPrice);
+    return;
+  }
 
   const tdSymbol = getTwelveDataSymbol(symbol);
   if (!tdSymbol) return;
@@ -125,6 +166,10 @@ export function disconnectTwelveData(): void {
     ws.close();
     ws = null;
   }
+  if (metalsStopPolling) {
+    metalsStopPolling();
+    metalsStopPolling = null;
+  }
   activeSymbol = null;
   priceCallback = null;
 }
@@ -192,6 +237,9 @@ export async function fetchCandles(
 
 /** Fetch latest live price from Twelve Data REST API */
 export async function fetchLivePrice(pair: string): Promise<number> {
+  if (pair === "XAU/USD" || pair === "XAG/USD") {
+    return fetchMetalsLivePrice(pair as "XAU/USD" | "XAG/USD");
+  }
   const symbol = FOREX_SYMBOL_MAP[pair] ?? pair;
   const url = `https://api.twelvedata.com/price?symbol=${symbol}&apikey=${TWELVE_DATA_API_KEY}`;
 

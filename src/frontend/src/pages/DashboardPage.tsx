@@ -195,6 +195,9 @@ export function DashboardPage() {
   const [chartType, setChartType] = useState<ChartType>("candlestick");
   const [positionSize, setPositionSize] = useState(0.01);
   const [scalpsToday, setScalpsToday] = useState(0);
+  const [invalidPriceWarning, setInvalidPriceWarning] = useState<string | null>(
+    null,
+  );
   const scalpsTodayDateRef = useRef(new Date().toDateString());
   const [candleFlash, setCandleFlash] = useState(false);
 
@@ -364,6 +367,28 @@ export function DashboardPage() {
       return;
     }
     connectTwelveData(selectedSymbol, (livePrice) => {
+      // Price validation
+      const priceRanges: Record<string, [number, number]> = {
+        "XAU/USD": [1500, 10000],
+        "XAG/USD": [10, 200],
+        "EUR/USD": [0.5, 2.5],
+        "GBP/USD": [0.5, 3.0],
+        "USD/JPY": [50, 200],
+      };
+      const range = priceRanges[selectedSymbol];
+      if (
+        range &&
+        livePrice > 0 &&
+        (livePrice < range[0] || livePrice > range[1])
+      ) {
+        setInvalidPriceWarning(
+          `Invalid price detected — ${selectedSymbol} price $${livePrice.toFixed(4)} is out of expected range. Refetching...`,
+        );
+        return; // reject this price
+      }
+      if (range && livePrice > 0) {
+        setInvalidPriceWarning(null);
+      }
       livePriceRef.current = livePrice;
       const config = SYMBOLS.find((s) => s.symbol === selectedSymbol);
       if (config) {
@@ -475,9 +500,12 @@ export function DashboardPage() {
   const selectedConfig: SymbolConfig =
     SYMBOLS.find((s) => s.symbol === selectedSymbol) ?? SYMBOLS[0];
   const selectedPrice = prices[selectedSymbol];
+  const METALS_LIVE_PAIRS = new Set(["XAU/USD", "XAG/USD"]);
   const priceSourceLabel = CRYPTO_SYMBOLS.has(selectedSymbol)
     ? "Price: Binance"
-    : "Price: Twelve Data";
+    : METALS_LIVE_PAIRS.has(selectedSymbol)
+      ? "Price: Metals.live"
+      : "Price: Twelve Data";
 
   const analysis = useMarketAnalysis(
     selectedSymbol,
@@ -924,6 +952,28 @@ export function DashboardPage() {
               Continue.
             </div>
           )}
+          {invalidPriceWarning && (
+            <div
+              data-ocid="dashboard.invalid_price.error_state"
+              className="mx-2 mb-1 mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2"
+              style={{
+                background: "oklch(0.18 0.12 80 / 0.7)",
+                border: "1px solid oklch(0.55 0.15 80 / 0.5)",
+                color: "oklch(0.85 0.12 80)",
+              }}
+            >
+              <span>⚠️</span>
+              <span className="flex-1">{invalidPriceWarning}</span>
+              <button
+                type="button"
+                className="ml-auto opacity-70 hover:opacity-100"
+                onClick={() => setInvalidPriceWarning(null)}
+                data-ocid="dashboard.invalid_price.close_button"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <div
             ref={chartContainerRef}
             className="flex-1 min-h-0 relative"
@@ -994,6 +1044,28 @@ export function DashboardPage() {
                 <AlertTriangle className="w-3 h-3 shrink-0" />
                 Daily Loss Limit Reached — Demo Trading Paused. AI Signals
                 Continue.
+              </div>
+            )}
+            {invalidPriceWarning && (
+              <div
+                data-ocid="dashboard.invalid_price.error_state"
+                className="mx-2 mt-1 mb-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 shrink-0"
+                style={{
+                  background: "oklch(0.18 0.12 80 / 0.7)",
+                  border: "1px solid oklch(0.55 0.15 80 / 0.5)",
+                  color: "oklch(0.85 0.12 80)",
+                }}
+              >
+                <span>⚠️</span>
+                <span className="flex-1">{invalidPriceWarning}</span>
+                <button
+                  className="ml-auto opacity-70 hover:opacity-100"
+                  type="button"
+                  onClick={() => setInvalidPriceWarning(null)}
+                  data-ocid="dashboard.invalid_price.close_button"
+                >
+                  ✕
+                </button>
               </div>
             )}
 

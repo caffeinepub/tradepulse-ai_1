@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchMetalsLivePrice } from "../utils/metalsService";
 import { fetchLivePrice } from "../utils/twelveDataService";
 import type { UnifiedSignal } from "../utils/unifiedSignalEngine";
 
@@ -120,7 +121,12 @@ export function useSignalLock(params: {
       // Twelve Data REST API polling for forex/commodities
       const poll = async () => {
         try {
-          const price = await fetchLivePrice(symbol);
+          let price = 0;
+          if (symbol === "XAU/USD" || symbol === "XAG/USD") {
+            price = await fetchMetalsLivePrice(symbol as "XAU/USD" | "XAG/USD");
+          } else {
+            price = await fetchLivePrice(symbol);
+          }
           if (price > 0) setLivePrice(price);
         } catch {
           // ignore fetch errors

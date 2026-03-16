@@ -59,7 +59,7 @@ export const SYMBOLS: SymbolConfig[] = [
   {
     symbol: "XAU/USD",
     name: "Gold",
-    basePrice: 2380,
+    basePrice: 3000,
     category: "gold",
     precision: 2,
     volatility: 0.002,
@@ -173,7 +173,7 @@ export const SYMBOLS: SymbolConfig[] = [
   {
     symbol: "XAG/USD",
     name: "Silver",
-    basePrice: 31.0,
+    basePrice: 32.0,
     category: "commodities",
     precision: 3,
     volatility: 0.004,
@@ -318,7 +318,6 @@ export function getPriceState(symbol: string): PriceState {
 
 /**
  * Updates all symbol prices by one tick at standard (1m-calibrated) volatility.
- * Kept for backward compatibility — prefer updatePricesWithScale for timeframe-aware updates.
  */
 export function updatePrices(): void {
   for (const config of SYMBOLS) {
@@ -339,22 +338,10 @@ export function updatePrices(): void {
 
 /**
  * Updates all symbol prices with a timeframe-aware delta scale.
- *
- * tickScaleFactor is typically: Math.sqrt(60_000 / timeframeMs)
- *   1m  → 1.000  (full speed)
- *   5m  → 0.447
- *   15m → 0.258
- *   1H  → 0.129
- *   4H  → 0.065
- *   1D  → 0.026
- *
- * This prevents higher-timeframe candles from moving as fast as 1m candles
- * in terms of tick-to-tick price change.
  */
 export function updatePricesWithScale(tickScaleFactor: number): void {
   for (const config of SYMBOLS) {
     const state = getPriceState(config.symbol);
-    // Scale per-tick volatility by the timeframe factor
     const scaledVolatility = config.volatility * tickScaleFactor;
     const delta = state.price * scaledVolatility * (Math.random() - 0.5) * 2;
     const newPrice = Math.max(state.price + delta, config.basePrice * 0.5);
@@ -379,8 +366,6 @@ const BINANCE_SYMBOL_MAP: Record<string, string> = {
 
 /**
  * Fetches live prices from the Binance REST API for BTC, ETH, and SOL.
- * Updates the SYMBOLS basePrice and seeds the priceStates map with real values.
- * Falls back silently to hardcoded values on any error.
  */
 export async function fetchLiveBinancePrices(): Promise<void> {
   try {
@@ -410,13 +395,11 @@ export async function fetchLiveBinancePrices(): Promise<void> {
       const priceChange = Number.parseFloat(ticker.priceChange);
       const priceChangePercent = Number.parseFloat(ticker.priceChangePercent);
 
-      // Update basePrice in the SYMBOLS array so future simulated drift is anchored to the real price
       const configEntry = SYMBOLS.find((s) => s.symbol === internalSymbol);
       if (configEntry) {
         configEntry.basePrice = lastPrice;
       }
 
-      // Seed the live price state with real Binance values
       priceStates.set(internalSymbol, {
         price: lastPrice,
         change24h: priceChange,
@@ -428,6 +411,61 @@ export async function fetchLiveBinancePrices(): Promise<void> {
   } catch (err) {
     console.warn(
       "[TradePulse] Binance live price fetch error — using hardcoded values.",
+      err,
+    );
+  }
+}
+
+/**
+ * Fetches live Gold and Silver prices from metals.live (free, no API key).
+ * Updates priceStates so TickerBar and landing page show accurate prices.
+ */
+export async function fetchLiveMetalPrices(): Promise<void> {
+  try {
+    const [goldRes, silverRes] = await Promise.all([
+      fetch("https://api.metals.live/v1/spot/gold"),
+      fetch("https://api.metals.live/v1/spot/silver"),
+    ]);
+    const goldJson = await goldRes.json();
+    const silverJson = await silverRes.json();
+
+    const goldPrice = Number(goldJson[0]?.gold ?? 0);
+    const silverPrice = Number(silverJson[0]?.silver ?? 0);
+
+    if (goldPrice > 1500 && goldPrice < 10000) {
+      const config = SYMBOLS.find((s) => s.symbol === "XAU/USD");
+      if (config) config.basePrice = goldPrice;
+      const existing = priceStates.get("XAU/USD");
+      priceStates.set("XAU/USD", {
+        price: goldPrice,
+        change24h: existing?.change24h ?? 0,
+        changePercent: existing?.changePercent ?? 0,
+        high24h: Math.max(existing?.high24h ?? goldPrice, goldPrice),
+        low24h:
+          existing && existing.low24h > 0
+            ? Math.min(existing.low24h, goldPrice)
+            : goldPrice * 0.985,
+      });
+    }
+
+    if (silverPrice > 10 && silverPrice < 200) {
+      const config = SYMBOLS.find((s) => s.symbol === "XAG/USD");
+      if (config) config.basePrice = silverPrice;
+      const existing = priceStates.get("XAG/USD");
+      priceStates.set("XAG/USD", {
+        price: silverPrice,
+        change24h: existing?.change24h ?? 0,
+        changePercent: existing?.changePercent ?? 0,
+        high24h: Math.max(existing?.high24h ?? silverPrice, silverPrice),
+        low24h:
+          existing && existing.low24h > 0
+            ? Math.min(existing.low24h, silverPrice)
+            : silverPrice * 0.985,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[TradePulse] Metal prices fetch error — using fallback values.",
       err,
     );
   }
@@ -456,18 +494,11 @@ export function generateChartData(
   return data;
 }
 
-/**
- * Formats a timestamp into a time label appropriate for the given timeframe.
- * - Sub-day: "HH:MM"
- * - Day or longer: "MMM DD" (e.g. "Mar 14")
- */
 function formatCandleTime(ts: number, timeframeMs: number): string {
   const d = new Date(ts);
   if (timeframeMs < 86_400_000) {
-    // Less than 1 day → show hours:minutes
     return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
   }
-  // 1 day or longer → show month abbr + day
   const month = d.toLocaleString("en-US", { month: "short" });
   return `${month} ${d.getDate()}`;
 }
@@ -480,8 +511,6 @@ export function generateCandleHistory(
   const config = SYMBOLS.find((s) => s.symbol === symbol);
   if (!config) return [];
 
-  // Scale volatility by square root of timeframe relative to 1m baseline
-  // This mimics Brownian motion: larger timeframes produce proportionally larger moves
   const volatilityMultiplier = Math.sqrt(timeframeMs / 60_000);
 
   const candles: CandleData[] = [];
@@ -490,7 +519,6 @@ export function generateCandleHistory(
 
   for (let i = points - 1; i >= 0; i--) {
     const open = price;
-    // Generate realistic intra-candle movement scaled by timeframe
     const numTicks = 10;
     let high = open;
     let low = open;
@@ -506,7 +534,6 @@ export function generateCandleHistory(
       high = Math.max(high, close);
       low = Math.min(low, close);
     }
-    // Extend wicks slightly, also scaled by timeframe
     const wickMult = config.volatility * volatilityMultiplier * open * 0.4;
     high += Math.random() * wickMult;
     low -= Math.random() * wickMult;

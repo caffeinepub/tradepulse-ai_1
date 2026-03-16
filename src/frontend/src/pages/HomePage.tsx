@@ -14,9 +14,71 @@ import {
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
-import { SYMBOLS, getPriceState, updatePrices } from "../utils/priceSimulator";
+import {
+  SYMBOLS,
+  fetchLiveBinancePrices,
+  fetchLiveMetalPrices,
+  getPriceState,
+  updatePrices,
+} from "../utils/priceSimulator";
 
-const MARKET_SYMBOLS = ["BTC/USD", "ETH/USD", "XAU/USD", "EUR/USD"];
+interface MarketEntry {
+  symbol: string;
+  name: string;
+  category: "Crypto" | "Forex" | "Commodities";
+  precision: number;
+  price: number;
+  changePercent: number;
+  change24h: number;
+}
+
+const ALL_MARKET_SYMBOLS: {
+  symbol: string;
+  category: "Crypto" | "Forex" | "Commodities";
+}[] = [
+  // Crypto
+  { symbol: "BTC/USD", category: "Crypto" },
+  { symbol: "ETH/USD", category: "Crypto" },
+  { symbol: "SOL/USD", category: "Crypto" },
+  { symbol: "BNB/USD", category: "Crypto" },
+  { symbol: "XRP/USD", category: "Crypto" },
+  { symbol: "ADA/USD", category: "Crypto" },
+  { symbol: "DOGE/USD", category: "Crypto" },
+  { symbol: "AVAX/USD", category: "Crypto" },
+  { symbol: "MATIC/USD", category: "Crypto" },
+  { symbol: "DOT/USD", category: "Crypto" },
+  // Forex
+  { symbol: "EUR/USD", category: "Forex" },
+  { symbol: "GBP/USD", category: "Forex" },
+  { symbol: "USD/JPY", category: "Forex" },
+  { symbol: "USD/CHF", category: "Forex" },
+  { symbol: "AUD/USD", category: "Forex" },
+  { symbol: "NZD/USD", category: "Forex" },
+  { symbol: "USD/CAD", category: "Forex" },
+  { symbol: "GBP/JPY", category: "Forex" },
+  { symbol: "EUR/JPY", category: "Forex" },
+  { symbol: "EUR/GBP", category: "Forex" },
+  // Commodities
+  { symbol: "XAU/USD", category: "Commodities" },
+  { symbol: "XAG/USD", category: "Commodities" },
+  { symbol: "WTI/USD", category: "Commodities" },
+];
+
+function buildMarketEntries(): MarketEntry[] {
+  return ALL_MARKET_SYMBOLS.map(({ symbol, category }) => {
+    const cfg = SYMBOLS.find((s) => s.symbol === symbol);
+    const state = getPriceState(symbol);
+    return {
+      symbol,
+      name: cfg?.name ?? symbol,
+      category,
+      precision: cfg?.precision ?? 2,
+      price: state.price,
+      changePercent: state.changePercent,
+      change24h: state.change24h,
+    };
+  });
+}
 
 const FEATURES = [
   {
@@ -29,7 +91,7 @@ const FEATURES = [
     icon: Globe,
     title: "Multi-Market Coverage",
     description:
-      "Trade crypto, forex, gold, and global indices from a single unified terminal interface.",
+      "Trade crypto, forex, gold, and commodities from a single unified terminal interface.",
   },
   {
     icon: Shield,
@@ -45,29 +107,52 @@ const FEATURES = [
   },
 ];
 
+const CATEGORY_COLORS: Record<string, string> = {
+  Crypto: "text-yellow-400",
+  Forex: "text-blue-400",
+  Commodities: "text-amber-400",
+};
+
 export function HomePage() {
   const { identity, login } = useInternetIdentity();
   const isAuthed = !!identity;
+  const [activeTab, setActiveTab] = useState<
+    "Crypto" | "Forex" | "Commodities"
+  >("Crypto");
 
-  const [marketData, setMarketData] = useState(() =>
-    MARKET_SYMBOLS.map((s) => ({
-      ...SYMBOLS.find((x) => x.symbol === s)!,
-      ...getPriceState(s),
-    })),
-  );
+  const [marketData, setMarketData] =
+    useState<MarketEntry[]>(buildMarketEntries);
 
+  // Fetch real prices on mount
+  useEffect(() => {
+    fetchLiveBinancePrices().then(() => {
+      setMarketData(buildMarketEntries());
+    });
+    fetchLiveMetalPrices().then(() => {
+      setMarketData(buildMarketEntries());
+    });
+  }, []);
+
+  // Periodic simulated updates (non-gold, non-crypto will drift slightly)
   useEffect(() => {
     const interval = setInterval(() => {
       updatePrices();
-      setMarketData(
-        MARKET_SYMBOLS.map((s) => ({
-          ...SYMBOLS.find((x) => x.symbol === s)!,
-          ...getPriceState(s),
-        })),
-      );
+      setMarketData(buildMarketEntries());
     }, 3000);
     return () => clearInterval(interval);
   }, []);
+
+  // Re-fetch real metal prices every 10s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchLiveMetalPrices().then(() => {
+        setMarketData(buildMarketEntries());
+      });
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const displayed = marketData.filter((m) => m.category === activeTab);
 
   return (
     <main className="min-h-screen">
@@ -140,6 +225,7 @@ export function HomePage() {
           </div>
         </motion.div>
 
+        {/* Stats */}
         <motion.div
           initial={{ opacity: 0, y: 32 }}
           animate={{ opacity: 1, y: 0 }}
@@ -147,9 +233,9 @@ export function HomePage() {
           className="relative z-10 mt-16 grid grid-cols-3 gap-4 max-w-md mx-auto"
         >
           {[
-            { label: "Win Rate", value: "73.4%" },
-            { label: "Signals/Day", value: "240+" },
-            { label: "Markets", value: "4" },
+            { label: "Win Rate", value: "78%" },
+            { label: "Signals/Day", value: "10+" },
+            { label: "Markets", value: "23" },
           ].map((stat) => (
             <div key={stat.label} className="text-center">
               <div className="font-mono text-2xl font-bold text-buy">
@@ -163,7 +249,7 @@ export function HomePage() {
         </motion.div>
       </section>
 
-      {/* Market overview */}
+      {/* Live Markets */}
       <section className="px-4 py-16 max-w-screen-xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -171,7 +257,7 @@ export function HomePage() {
           viewport={{ once: true }}
           transition={{ duration: 0.5 }}
         >
-          <div className="flex items-center gap-2 mb-8">
+          <div className="flex items-center gap-2 mb-6">
             <div className="h-px flex-1 bg-border" />
             <span className="text-xs font-mono text-muted-foreground px-3">
               LIVE MARKETS
@@ -179,51 +265,79 @@ export function HomePage() {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {marketData.map((market, i) => (
-              <motion.div
-                key={market.symbol}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: i * 0.08 }}
+          {/* Category tabs */}
+          <div className="flex gap-2 mb-5">
+            {(["Crypto", "Forex", "Commodities"] as const).map((tab) => (
+              <button
+                type="button"
+                key={tab}
+                data-ocid={`markets.${tab.toLowerCase()}.tab`}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-1.5 rounded text-xs font-mono font-medium border transition-colors ${
+                  activeTab === tab
+                    ? "bg-primary/20 border-primary/50 text-buy"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-border/80"
+                }`}
               >
-                <div className="terminal-border bg-card rounded p-4 transition-colors">
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-0.5">
-                        {market.name}
-                      </div>
-                      <div className="font-display text-sm font-semibold">
-                        {market.symbol}
-                      </div>
-                    </div>
-                    <Badge
-                      className={`text-xs font-mono ${
-                        market.changePercent >= 0
-                          ? "bg-buy border-buy text-buy"
-                          : "bg-sell border-sell text-sell"
-                      }`}
-                      variant="outline"
-                    >
-                      {market.changePercent >= 0 ? "+" : ""}
-                      {market.changePercent.toFixed(2)}%
-                    </Badge>
-                  </div>
-                  <div className="font-mono text-xl font-bold">
-                    {market.price.toFixed(market.precision)}
-                  </div>
-                  <div
-                    className={`text-xs font-mono mt-1 ${
-                      market.change24h >= 0 ? "text-buy" : "text-sell"
-                    }`}
-                  >
-                    {market.change24h >= 0 ? "+" : ""}
-                    {market.change24h.toFixed(market.precision)}
-                  </div>
-                </div>
-              </motion.div>
+                {tab}
+                <span className="ml-1.5 text-muted-foreground">
+                  ({ALL_MARKET_SYMBOLS.filter((m) => m.category === tab).length}
+                  )
+                </span>
+              </button>
             ))}
+          </div>
+
+          {/* Scrollable market grid */}
+          <div className="max-h-[480px] overflow-y-auto pr-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-border">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {displayed.map((market, i) => (
+                <motion.div
+                  key={market.symbol}
+                  initial={{ opacity: 0, y: 16 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.35, delay: i * 0.04 }}
+                >
+                  <div className="terminal-border bg-card rounded p-3 transition-colors h-full">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <div
+                          className={`text-xs font-mono font-medium ${CATEGORY_COLORS[market.category]}`}
+                        >
+                          {market.symbol}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[80px]">
+                          {market.name}
+                        </div>
+                      </div>
+                      <Badge
+                        className={`text-xs font-mono shrink-0 ${
+                          market.changePercent >= 0
+                            ? "bg-buy/10 border-buy/30 text-buy"
+                            : "bg-sell/10 border-sell/30 text-sell"
+                        }`}
+                        variant="outline"
+                      >
+                        {market.changePercent >= 0 ? "+" : ""}
+                        {market.changePercent.toFixed(2)}%
+                      </Badge>
+                    </div>
+                    <div className="font-mono text-sm font-bold">
+                      {market.price.toFixed(market.precision)}
+                    </div>
+                    <div
+                      className={`text-xs font-mono mt-0.5 ${
+                        market.change24h >= 0 ? "text-buy" : "text-sell"
+                      }`}
+                    >
+                      {market.change24h >= 0 ? "+" : ""}
+                      {market.change24h.toFixed(market.precision)}
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </motion.div>
       </section>
@@ -339,15 +453,8 @@ export function HomePage() {
             )}
           </div>
           <p className="text-xs text-muted-foreground text-center">
-            © {new Date().getFullYear()}. Built with love using{" "}
-            <a
-              href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-buy hover:underline"
-            >
-              caffeine.ai
-            </a>
+            © {new Date().getFullYear()}. Built with love by{" "}
+            <span className="text-buy">Shaarif</span>
           </p>
         </div>
       </footer>
